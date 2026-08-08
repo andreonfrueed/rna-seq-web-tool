@@ -1,0 +1,18 @@
+[theme]
+primaryColor = "#2563EB"
+backgroundColor = "#FFFFFF"
+secondaryBackgroundColor = "#F1F5FB"
+textColor = "#17233B"
+font = "sans serif"
+
+[server]
+# 网页直传文件的大小上限（MB）。更大的文件请放进 uploads 文件夹再扫描
+maxUploadSize = 2048
+# WebSocket 单条消息上限（MB）。下载按钮的数据走这个通道：
+# 超过此值的大 ZIP 无法下发到浏览器，代码里超过 180MB 的包会自动改走
+# 「复制到上传文件夹」让用户自取。这里显式写出来，避免依赖 Streamlit
+# 默认值（各版本不同）产生"有的机器能下有的不能"的困惑。
+maxMessageSize = 200
+
+[browser]
+gatherUsageStats = false

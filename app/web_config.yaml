@@ -1,0 +1,16 @@
+# 网页配置：只放"每台机器可能需要改"的项。
+# 其余所有默认值（阈值、线程、内存、Ensembl 版本等）统一收敛在
+# app/lib/config.py 的 _DEFAULT_CONFIG 中（RED-04：单一事实来源，
+# 改默认值只需改 config.py 一处）。本文件里没写的键自动用默认值。
+
+# 工作区根目录（WSL 原生路径，可用环境变量 RNA_WEB_WORKSPACE 覆盖）
+workspace_dir: "~/rna_web_workspace"
+
+# Ensembl 下载地址与版本（升级基因组版本时改这里）
+ensembl_base: "https://ftp.ensembl.org/pub"
+ensembl_release: 113
+
+# 计算资源：默认按常见实验室台式机配置给出；
+# 内存不够/富余的机器，在网页「分组与参数」页按本机情况调整即可。
+threads: 8
+memory: 12

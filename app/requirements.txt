@@ -1,0 +1,13 @@
+# 网页框架：1.61 配 starlette 0.46（starlette 1.x 与 Streamlit 1.61 的
+# gzip 中间件不兼容，会导致网页 500），两个版本必须一起锁
+# 其余依赖不写死版本：首次安装后由 setup_env.sh 生成 requirements-lock.txt 快照固定
+streamlit>=1.61,<1.62
+starlette==0.46.0
+streamlit-autorefresh
+pyyaml
+# 富集分析与出图
+gseapy
+pandas
+matplotlib
+# 测试
+pytest
