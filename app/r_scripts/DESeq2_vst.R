@@ -8,8 +8,9 @@
 
 parse_args <- function(argv) {
   args <- list(counts = NULL, samples = NULL, gtf = NULL, outdir = NULL,
-               top = 50L, topvar = 1000L)
-  known <- c("--counts", "--samples", "--gtf", "--outdir", "--top", "--topvar")
+               symbol_map = NULL, top = 50L, topvar = 1000L)
+  known <- c("--counts", "--samples", "--gtf", "--outdir", "--symbol-map",
+             "--top", "--topvar")
   i <- 1L
   while (i <= length(argv)) {
     flag <- argv[[i]]
@@ -19,7 +20,7 @@ parse_args <- function(argv) {
     if (i + 1L > length(argv)) {
       stop(paste0("参数缺少值: ", flag), call. = FALSE)
     }
-    name <- sub("^--", "", flag)
+    name <- gsub("-", "_", sub("^--", "", flag))
     value <- argv[[i + 1L]]
     if (name %in% c("top", "topvar")) {
       value <- suppressWarnings(as.integer(value))
@@ -36,6 +37,29 @@ parse_args <- function(argv) {
     stop(paste0("缺少必需参数: --", paste(missing, collapse = ", --")), call. = FALSE)
   }
   args
+}
+
+read_symbol_map <- function(path) {
+  if (is.null(path) || !file.exists(path)) {
+    return(data.frame(gene = character(0), symbol = character(0),
+                      stringsAsFactors = FALSE))
+  }
+  df <- utils::read.csv(path, stringsAsFactors = FALSE)
+  if (!all(c("gene", "symbol") %in% names(df))) {
+    stop("symbol-map 需要 gene 和 symbol 两列", call. = FALSE)
+  }
+  df
+}
+
+symbols_for <- function(genes, symbol_map) {
+  out <- symbol_map$symbol[match(genes, symbol_map$gene)]
+  out[is.na(out)] <- genes[is.na(out)]
+  # 重复 symbol 加后缀，保证热图行名唯一
+  dup <- duplicated(out)
+  if (any(dup)) {
+    out[dup] <- paste0(out[dup], "_", genes[dup])
+  }
+  out
 }
 
 check_packages <- function() {
@@ -83,32 +107,33 @@ load_samples <- function(samples_path) {
   list(samples = samples_df, sample_names = sample_names)
 }
 
-render_deg_heatmap <- function(vst_mat, outdir, top) {
+render_deg_heatmap <- function(vst_mat, outdir, top, symbol_map) {
   deg_xlsx <- file.path(outdir, "4.Differential_Expression", "Filtered_DEGs.xlsx")
-  if (!file.exists(deg_xlsx)) {
-    warning(paste0("未找到差异表，跳过 DEG 热图: ", deg_xlsx), call. = FALSE)
-    return(invisible(NULL))
-  }
+  diff_dir <- file.path(outdir, "4.Differential_Expression")
   tryCatch({
-    sheets <- readxl::excel_sheets(deg_xlsx)
     sig_genes <- character(0)
-    for (sheet in sheets) {
-      raw_deg <- readxl::read_excel(deg_xlsx, sheet = sheet)
-      deg_df <- as.data.frame(raw_deg, stringsAsFactors = FALSE)
-      names(deg_df) <- names(raw_deg)
-      if (!("Gene" %in% names(deg_df))) {
-        warning(paste0("差异表 sheet「", sheet, "」缺少 Gene 列，已跳过"), call. = FALSE)
-        next
+    if (file.exists(deg_xlsx)) {
+      sheets <- readxl::excel_sheets(deg_xlsx)
+      for (sheet in sheets) {
+        raw_deg <- readxl::read_excel(deg_xlsx, sheet = sheet)
+        deg_df <- as.data.frame(raw_deg, stringsAsFactors = FALSE)
+        names(deg_df) <- names(raw_deg)
+        if (!("Gene" %in% names(deg_df))) next
+        pvalue_cols <- names(deg_df)[grepl("^(fdr|padj)", tolower(names(deg_df)))]
+        if (length(pvalue_cols) == 0L) next
+        pvalues <- deg_df[[pvalue_cols[1L]]]
+        keep <- !is.na(pvalues) & pvalues < 0.05
+        sig_genes <- unique(c(sig_genes, as.character(deg_df$Gene[keep])))
       }
-      # 列名可能是 FDR 或 FDR(比较名) 等带后缀形式
-      pvalue_cols <- names(deg_df)[grepl("^(fdr|padj)", tolower(names(deg_df)))]
-      if (length(pvalue_cols) == 0L) {
-        warning(paste0("差异表 sheet「", sheet, "」缺少 FDR/padj 列，已跳过"), call. = FALSE)
-        next
+    } else {
+      csv_files <- list.files(diff_dir, pattern = "^DESeq2_.*_vs_.*\\.csv$",
+                              full.names = TRUE)
+      for (f in csv_files) {
+        deg_df <- utils::read.csv(f, stringsAsFactors = FALSE)
+        if (!("padj" %in% names(deg_df))) next
+        keep <- !is.na(deg_df$padj) & deg_df$padj < 0.05
+        sig_genes <- unique(c(sig_genes, as.character(deg_df$Gene[keep])))
       }
-      pvalues <- deg_df[[pvalue_cols[1L]]]
-      keep <- !is.na(pvalues) & pvalues < 0.05
-      sig_genes <- unique(c(sig_genes, as.character(deg_df$Gene[keep])))
     }
     if (length(sig_genes) == 0L) {
       warning("差异表中没有 FDR/padj < 0.05 的显著基因，跳过 DEG 热图", call. = FALSE)
@@ -133,8 +158,10 @@ render_deg_heatmap <- function(vst_mat, outdir, top) {
     dir.create(heat_dir, recursive = TRUE, showWarnings = FALSE)
     deg_png <- file.path(heat_dir, "DEG_heatmap_vst.png")
     grDevices::png(deg_png, width = 10, height = 8, units = "in", res = 300)
+    heat_mat <- vst_mat[matched_genes, , drop = FALSE]
+    rownames(heat_mat) <- symbols_for(rownames(heat_mat), symbol_map)
     pheatmap::pheatmap(
-      vst_mat[matched_genes, , drop = FALSE],
+      heat_mat,
       scale = "row"
     )
     grDevices::dev.off()
@@ -142,6 +169,59 @@ render_deg_heatmap <- function(vst_mat, outdir, top) {
     warning(paste0("DEG 热图生成失败，已跳过: ", conditionMessage(e)), call. = FALSE)
   })
   invisible(NULL)
+}
+
+run_deseq_results <- function(dds, condition_levels, symbol_map, outdir) {
+  diff_dir <- file.path(outdir, "4.Differential_Expression")
+  gene_dir <- file.path(diff_dir, "diff_genes")
+  dir.create(gene_dir, recursive = TRUE, showWarnings = FALSE)
+  dds <- DESeq2::DESeq(dds, quiet = TRUE)
+  for (i in seq_len(length(condition_levels) - 1L)) {
+    for (j in (i + 1L):length(condition_levels)) {
+      c1 <- condition_levels[[i]]
+      c2 <- condition_levels[[j]]
+      res <- DESeq2::results(dds, contrast = c("condition", c1, c2))
+      df <- as.data.frame(res)
+      df$Gene <- rownames(df)
+      df$Symbol <- symbols_for(df$Gene, symbol_map)
+      df <- df[, c("Gene", "Symbol", "baseMean", "log2FoldChange",
+                   "lfcSE", "stat", "pvalue", "padj")]
+      rownames(df) <- NULL
+      write.csv(df, file.path(diff_dir, paste0("DESeq2_", c1, "_vs_", c2, ".csv")),
+                row.names = FALSE, fileEncoding = "UTF-8")
+      sig <- !is.na(df$padj) & df$padj < 0.05 & !is.na(df$log2FoldChange)
+      up <- df$Gene[sig & df$log2FoldChange >= 1]
+      down <- df$Gene[sig & df$log2FoldChange <= -1]
+      writeLines(up, file.path(gene_dir, paste0(c1, "-", c2, "_up.txt")))
+      writeLines(down, file.path(gene_dir, paste0(c1, "-", c2, "_down.txt")))
+      writeLines(c(up, down), file.path(gene_dir, paste0(c1, "-", c2, ".txt")))
+      cat("  DESeq2", c1, "vs", c2, ": up", length(up), "down", length(down), "\n")
+    }
+  }
+}
+
+render_pca <- function(vst_mat, col_data, outdir) {
+  pca_dir <- file.path(outdir, "5.Visualization", "Sample_Plots")
+  dir.create(pca_dir, recursive = TRUE, showWarnings = FALSE)
+  row_vars <- apply(vst_mat, 1L, stats::var)
+  n <- min(1000L, nrow(vst_mat))
+  top_genes <- names(sort(row_vars, decreasing = TRUE))[seq_len(n)]
+  pca <- stats::prcomp(t(vst_mat[top_genes, , drop = FALSE]),
+                       center = TRUE, scale. = FALSE)
+  percent <- round(100 * summary(pca)$importance[2L, ], 1)
+  conds <- as.character(col_data$condition)
+  palette <- c("#E64B35", "#4DBBD5", "#00A087", "#F39B7F", "#8491B4")
+  colors <- palette[as.integer(factor(conds, levels = unique(conds)))]
+  pca_png <- file.path(pca_dir, "All_Samples_PCA_vst.png")
+  grDevices::png(pca_png, width = 7, height = 5.5, units = "in", res = 300)
+  graphics::par(mar = c(4.5, 4.5, 1.5, 1))
+  graphics::plot(pca$x[, 1L], pca$x[, 2L], col = colors, pch = 16, cex = 1.4,
+                 xlab = paste0("PC1 (", percent[[1L]], "%)"),
+                 ylab = paste0("PC2 (", percent[[2L]], "%)"),
+                 main = "PCA (VST, top 1000 variable genes)")
+  graphics::legend("topright", legend = unique(conds), col = palette[seq_len(length(unique(conds)))],
+                   pch = 16, bty = "n")
+  grDevices::dev.off()
 }
 
 main <- function() {
@@ -179,8 +259,12 @@ main <- function() {
   }
   counts_mat <- counts_mat[keep_rows, , drop = FALSE]
 
+  identifiers <- as.character(
+    samples$samples$Identifier[match(keep_cols, samples$sample_names)])
+  # 与网页端"处理÷对照"策略一致：按样本表首现顺序取逆序作为比较方向
+  condition_levels <- rev(unique(identifiers))
   col_data <- data.frame(
-    condition = factor(samples$samples$Identifier[match(keep_cols, samples$sample_names)]),
+    condition = factor(identifiers, levels = condition_levels),
     row.names = keep_cols,
     stringsAsFactors = FALSE
   )
@@ -196,9 +280,17 @@ main <- function() {
   dir.create(norm_dir, recursive = TRUE, showWarnings = FALSE)
   vst_df <- as.data.frame(vst_mat, check.names = FALSE, stringsAsFactors = FALSE)
   vst_df <- cbind(Gene = rownames(vst_mat), vst_df, stringsAsFactors = FALSE)
+  symbol_map <- read_symbol_map(args$symbol_map)
+  vst_df <- cbind(Gene = vst_df$Gene,
+                  Symbol = symbols_for(vst_df$Gene, symbol_map),
+                  vst_df[, -1L, drop = FALSE],
+                  stringsAsFactors = FALSE)
   rownames(vst_df) <- NULL
   utils::write.csv(vst_df, file.path(norm_dir, "VST_normalized_counts.csv"),
                    row.names = FALSE, fileEncoding = "UTF-8")
+
+  run_deseq_results(dds, condition_levels, symbol_map, args$outdir)
+  render_pca(vst_mat, col_data, args$outdir)
 
   if (nrow(vst_mat) >= 2L) {
     row_vars <- apply(vst_mat, 1L, stats::var)
@@ -208,8 +300,10 @@ main <- function() {
     dir.create(cluster_dir, recursive = TRUE, showWarnings = FALSE)
     cluster_png <- file.path(cluster_dir, "sample_clustering_vst_heatmap.png")
     grDevices::png(cluster_png, width = 10, height = 8, units = "in", res = 300)
+    heat_mat <- vst_mat[top_var_genes, , drop = FALSE]
+    rownames(heat_mat) <- symbols_for(rownames(heat_mat), symbol_map)
     pheatmap::pheatmap(
-      vst_mat[top_var_genes, , drop = FALSE],
+      heat_mat,
       scale = "row",
       clustering_method = "average",
       show_rownames = FALSE
@@ -219,7 +313,7 @@ main <- function() {
     warning("VST 矩阵基因太少，跳过样本聚类热图", call. = FALSE)
   }
 
-  render_deg_heatmap(vst_mat, args$outdir, args$top)
+  render_deg_heatmap(vst_mat, args$outdir, args$top, symbol_map)
   invisible(NULL)
 }
 
