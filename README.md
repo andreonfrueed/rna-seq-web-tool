@@ -15,6 +15,12 @@
 
 ![主界面](docs/screenshot.png)
 
+> ### ⚠️ 重要限制（使用前必读）
+>
+> - **平台**：仅支持 **Windows 10 / 11**，且必须启用 **WSL2**（Ubuntu）；**不支持 Mac、Linux 原生或其他系统**
+> - **底层软件版本**：Python 3.10 · Streamlit 1.61 · PySeqRNA 1.0.0；比对工具 HISAT2 / STAR、辅助工具 samtools / FastQC / Trim Galore 随安装时 Conda 渠道最新版安装，首次安装后以 `requirements-lock.txt` 快照记录 Python 依赖
+> - **定位**：本工具适合**预分析/快速探索**；涉及正式论文发表时，请用专业流程（如 nf-core/rnaseq 等）复核结果
+
 ### ✨ 功能特性
 
 - **一键安装**：双击 `一键安装.bat`，自动装好 WSL 环境、Miniconda 和全部分析工具
@@ -54,6 +60,8 @@ flowchart LR
 
 详细说明见 [使用说明.md](使用说明.md)。
 
+> 💡 装完先双击 **`一键环境测试.bat`**：自动复制 [example](example/) 里的迷你测试数据并检查工具链与内置测试，几分钟确认环境没问题再开始真实分析。
+
 ### 🗂 项目结构
 
 ```
@@ -83,6 +91,12 @@ cd app && python -m pytest tests/    # 51 passed
 A **local-first RNA-seq analysis web app for wet labs**: upload sequencing data in your browser and get alignment, quantification, differential expression and enrichment analysis done automatically — no coding required. **Your data never leaves your computer.**
 
 ![Main UI](docs/screenshot.png)
+
+> ### ⚠️ Important limitations (read before use)
+>
+> - **Platform**: **Windows 10 / 11 only**, requires **WSL2** (Ubuntu); **macOS and native Linux are not supported**
+> - **Underlying software**: Python 3.10 · Streamlit 1.61 · PySeqRNA 1.0.0; HISAT2 / STAR / samtools / FastQC / Trim Galore are installed at the latest versions available from Conda at install time; Python dependencies are snapshotted into `requirements-lock.txt` after the first install
+> - **Intended use**: suitable for **preliminary analysis / quick exploration**; please re-validate results with a professional pipeline (e.g. nf-core/rnaseq) for publication
 
 ### ✨ Features
 

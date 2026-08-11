@@ -854,6 +854,21 @@ def _show_run_progress(run_dir: Path, proc, run_name: str, pid: int | None = Non
         if log_path.exists():
             st.download_button("📄 下载运行日志", data=log_path.read_bytes(),
                                file_name=f"{run_name}.log", key=f"log_{run_name}")
+            # 诊断包：日志 + 配置 + 样本表 + checkpoint，报错排查一次拿全
+            import io
+            import zipfile
+            buf = io.BytesIO()
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                zf.write(log_path, "pyseqrna.log")
+                for name in ("run.ini", "samples.tsv",
+                             "output/pyseqrna_checkpoint.json"):
+                    p = run_dir / name
+                    if p.exists():
+                        zf.write(p, name)
+            st.download_button("🧰 下载诊断包（日志+配置+样本表）",
+                               data=buf.getvalue(),
+                               file_name=f"{run_name}_diagnostics.zip",
+                               key=f"diag_{run_name}")
     else:
         st.caption("每 5 秒自动刷新…")
         if st_autorefresh is not None:
