@@ -58,7 +58,7 @@ run_coexpression = False
 
 [DifferentialExpression]
 skip_diffexp = False
-diffexp_tool = pydiffexpress
+diffexp_tool = {diffexp_tool}
 diffexp_normalization = median_ratio
 diffexp_abundance = base_mean
 diffexp_dispersion = map
@@ -115,6 +115,7 @@ def build_ini(params: dict) -> str:
         genome=str(Path(params["genome"]).resolve()),
         gtf=str(Path(params["gtf"]).resolve()),
         outdir=str(Path(params["outdir"]).resolve()),
+        diffexp_tool=params.get("diffexp_tool", "deseq2"),
         species=species,
         alignment_tool=params.get("alignment_tool", "hisat2"),
         paired="True" if params.get("paired", True) else "False",

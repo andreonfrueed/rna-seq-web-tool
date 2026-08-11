@@ -601,10 +601,12 @@ def tab_groups() -> None:
     c1, c2, c3, c4 = st.columns(4)
     fold = c1.number_input("差异倍数阈值", 1.0, 100.0,
                            float(cfg["fold_threshold"]), 0.5,
-                           help="表达量相差多少倍才算差异基因，默认 2 倍")
+                           help="表达量相差多少倍才算差异基因，默认 2 倍；"
+                                "DESeq2 引擎下对应 log2FC 阈值")
     pval = c2.number_input("P 值阈值", 0.0001, 0.5,
                            float(cfg["pvalue_threshold"]), 0.01,
-                           help="越小越严格，默认 0.05")
+                           help="越小越严格，默认 0.05；"
+                                "DESeq2 引擎下对应 padj 阈值")
     threads = c3.number_input("线程数", 1, 32, config.load_config()["threads"],
                               help="电脑 CPU 核心越多可以开越大，跑得快些")
     memory = c4.number_input("内存 (GB)", 4, 128, config.load_config()["memory"],
@@ -669,15 +671,27 @@ def tab_run() -> None:
         index=0,
         help="HISAT2 省内存（推荐本机）；STAR 更主流，但建人/鼠索引需要 30GB+ 内存，本机可能失败",
     )
+    c3, _ = st.columns(2)
+    diffexp_label = c3.selectbox(
+        "差异分析引擎",
+        ["DESeq2（推荐，论文标准）", "pydiffexpress（旧引擎）"],
+        index=0,
+        help="DESeq2 是当前论文标准差异分析方法（输出 log2FC/padj，"
+             "并生成 VST 标准化矩阵用于热图）；pydiffexpress 为旧引擎，"
+             "仅作为装不上 R/DESeq2 时的回退",
+    )
+    diffexp_tool = "deseq2" if diffexp_label.startswith("DESeq2") else "pydiffexpress"
+    st.session_state["diffexp_tool"] = diffexp_tool
 
     if st.button("🚀 开始分析", type="primary"):
         _start_analysis(run_name, samples, group_of, species, refs, paired,
-                        skip_trim, alignment_tool)
+                        skip_trim, alignment_tool, diffexp_tool)
 
 
 def _start_analysis(run_name: str, samples: list[dict], group_of: dict,
                     species: str, refs: dict, paired: bool,
-                    skip_trim: bool, alignment_tool: str) -> None:
+                    skip_trim: bool, alignment_tool: str,
+                    diffexp_tool: str) -> None:
     """开跑前自检（磁盘 + 文件完整性）→ 生成配置 → 后台启动。"""
     if paired:
         missing_r2 = [s["id"] for s in samples if not s.get("r2")]
@@ -702,6 +716,9 @@ def _start_analysis(run_name: str, samples: list[dict], group_of: dict,
         st.write("🧰 检查分析环境…")
         env_ok = True
         for r in env_check.check_all():
+            # pydiffexpress 回退模式不要求 R/DESeq2，避免装了旧引擎却开不了跑
+            if diffexp_tool != "deseq2" and r["name"] == "R/DESeq2":
+                continue
             if not r["ok"]:
                 env_ok = False
                 hint = r.get("hint") or "请回『环境体检』页按提示安装"
@@ -777,6 +794,7 @@ def _start_analysis(run_name: str, samples: list[dict], group_of: dict,
             "outdir": run_dir / "output",
             "species": species,
             "alignment_tool": alignment_tool,
+            "diffexp_tool": diffexp_tool,
             "threads": int(st.session_state.get("threads", config.load_config()["threads"])),
             "memory": int(st.session_state.get("memory", config.load_config()["memory"])),
             "fold_threshold": st.session_state.get("fold", 2.0),
@@ -1117,8 +1135,13 @@ def tab_results() -> None:
     except Exception as e:
         st.warning(f"打包失败：{e}")
 
+    if (outdir / "4.Normalization" / "VST_normalized_counts.csv").exists():
+        st.caption("RPKM 表保留供浏览；本次分析另输出 VST 标准化矩阵"
+                   "（VST_normalized_counts.csv），论文级热图/下游分析请用 VST。")
+
     # ---- 图片预览：火山图/热图等直接看，不用先下载 ----
     pngs = [p for files in groups.values() for p in files if p.suffix.lower() == ".png"]
+    pngs.sort(key=lambda p: (0 if "vst" in p.name.lower() else 1, p.name.lower()))
     if pngs:
         with st.expander(f"👀 图片预览（{len(pngs)} 张）", expanded=True):
             cols = st.columns(3)

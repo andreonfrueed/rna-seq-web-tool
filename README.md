@@ -18,7 +18,7 @@
 > ### ⚠️ 重要限制（使用前必读）
 >
 > - **平台**：仅支持 **Windows 10 / 11**，且必须启用 **WSL2**（Ubuntu）；**不支持 Mac、Linux 原生或其他系统**
-> - **底层软件版本**：Python 3.10 · Streamlit 1.61 · PySeqRNA 1.0.0；比对工具 HISAT2 / STAR、辅助工具 samtools / FastQC / Trim Galore 随安装时 Conda 渠道最新版安装，首次安装后以 `requirements-lock.txt` 快照记录 Python 依赖
+> - **底层软件版本**：Python 3.10 · Streamlit 1.61 · PySeqRNA 1.0.0 · R 4.5 · DESeq2 1.50；比对工具 HISAT2 / STAR、辅助工具 samtools / FastQC / Trim Galore 随安装时 Conda 渠道最新版安装，首次安装后以 `requirements-lock.txt` 快照记录 Python 依赖
 > - **定位**：本工具适合**预分析/快速探索**；涉及正式论文发表时，请用专业流程（如 nf-core/rnaseq 等）复核结果
 
 ### ✨ 功能特性
@@ -26,6 +26,7 @@
 - **一键安装**：双击 `一键安装.bat`，自动装好 WSL 环境、Miniconda 和全部分析工具
 - **参考文件自动准备**：人（GRCh38）/ 小鼠（GRCm39）基因组与注释自动从 Ensembl 下载并校验，下一次永久离线可用
 - **智能样本识别**：自动配对 `样本_R1/R2`（或 `_1/_2`）文件，双端缺对、命名不规范都会明确提示
+- **论文级差异分析**：默认用 **R DESeq2**（log2FC + padj），并输出 **VST 标准化矩阵**；样本聚类热图与差异基因热图基于 VST 绘制，符合论文标准做法；RPKM 表仍保留供浏览
 - **开跑前自检**：磁盘空间（能穿透 WSL 虚拟盘检测到真实的 Windows 盘）、FASTQ 完整性、分析环境，有问题当场拦下，而不是几小时后才发现
 - **实时进度与断线重连**：浏览器关了重开也能接上进度；中途想停，一键安全停止
 - **结果一目了然**：火山图/热图/PCA 直接预览，表格和图单个下载或打包 ZIP；GO/KEGG 富集按「比较 × 上调/下调」分别出结果，目录直接标明方向（如 `LPS高于C`）
@@ -70,6 +71,7 @@ flowchart LR
 ├── app/
 │   ├── app.py                # Streamlit 页面与交互
 │   ├── lib/                  # 后端：运行器、预检、参考文件、结果、富集等
+│   ├── r_scripts/            # R/DESeq2 后处理（VST 矩阵与热图）
 │   └── tests/                # pytest 测试（51 项）
 └── archive/                  # 归档的一次性数据修复脚本
 ```
@@ -95,7 +97,7 @@ A **local-first RNA-seq analysis web app for wet labs**: upload sequencing data 
 > ### ⚠️ Important limitations (read before use)
 >
 > - **Platform**: **Windows 10 / 11 only**, requires **WSL2** (Ubuntu); **macOS and native Linux are not supported**
-> - **Underlying software**: Python 3.10 · Streamlit 1.61 · PySeqRNA 1.0.0; HISAT2 / STAR / samtools / FastQC / Trim Galore are installed at the latest versions available from Conda at install time; Python dependencies are snapshotted into `requirements-lock.txt` after the first install
+> - **Underlying software**: Python 3.10 · Streamlit 1.61 · PySeqRNA 1.0.0 · R 4.5 · DESeq2 1.50; HISAT2 / STAR / samtools / FastQC / Trim Galore are installed at the latest versions available from Conda at install time; Python dependencies are snapshotted into `requirements-lock.txt` after the first install
 > - **Intended use**: suitable for **preliminary analysis / quick exploration**; please re-validate results with a professional pipeline (e.g. nf-core/rnaseq) for publication
 
 ### ✨ Features
@@ -103,6 +105,7 @@ A **local-first RNA-seq analysis web app for wet labs**: upload sequencing data 
 - **One-click install**: double-click `一键安装.bat` to set up WSL, Miniconda and all bioinformatics tools automatically
 - **Automatic references**: human (GRCh38) / mouse (GRCm39) genome and annotation downloaded from Ensembl with content validation, then available offline forever
 - **Smart sample detection**: auto-pairs `sample_R1/R2` (or `_1/_2`) FASTQ files, with clear messages for missing mates or bad names
+- **Publication-grade DE**: **DESeq2 (R)** by default (log2FC + padj) with a **VST-normalized matrix**; sample-clustering and DEG heatmaps are drawn from VST values; RPKM tables remain available for browsing
 - **Pre-flight checks**: disk space (sees through the WSL virtual disk to the real Windows drive), FASTQ integrity and environment readiness — problems are caught before a 10-hour run, not after
 - **Live progress & reconnect**: close the browser and come back later, the progress page reconnects; a safe stop button is always available
 - **Friendly results**: preview volcano/heatmap/PCA plots inline, download tables individually or as one ZIP; GO/KEGG enrichment is run separately per comparison × up/down, with self-explanatory folder names (e.g. `LPS高于C`)

@@ -15,21 +15,21 @@ echo "==============================================="
 # 1. 安装 miniconda
 if [ ! -x "$HOME/miniconda3/bin/conda" ]; then
   echo ""
-  echo "[1/5] 安装 miniconda（基础软件管理）..."
+  echo "[1/6] 安装 miniconda（基础软件管理）..."
   curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o /tmp/mc.sh
   bash /tmp/mc.sh -b -p "$HOME/miniconda3"
   rm -f /tmp/mc.sh
 else
-  echo "[1/5] miniconda 已存在，跳过"
+  echo "[1/6] miniconda 已存在，跳过"
 fi
 
 source "$HOME/miniconda3/etc/profile.d/conda.sh"
 
 # 2. 创建分析环境并安装工具
 if conda env list 2>/dev/null | grep -q "^pyseqrna "; then
-  echo "[2/5] 分析环境已存在，跳过"
+  echo "[2/6] 分析环境已存在，跳过"
 else
-  echo "[2/5] 创建分析环境并安装比对工具（内存友好的 HISAT2 + STAR + 辅助工具）..."
+  echo "[2/6] 创建分析环境并安装比对工具（内存友好的 HISAT2 + STAR + 辅助工具）..."
   if ! conda create -y -n pyseqrna -c conda-forge -c bioconda python=3.10 \
       hisat2 star samtools fastqc trim-galore; then
     echo "     尝试分开安装..."
@@ -47,7 +47,7 @@ conda activate pyseqrna
 # 将来升级引擎：改这两行 + 人工审计新代码即可。
 PYSEQRNA_TAG="v1.0.0"
 PYSEQRNA_COMMIT="0006e8af51c0a940bc8f37ade65c3e3a23c79029"
-echo "[3/5] 安装分析引擎 pyseqrna（锁定 ${PYSEQRNA_TAG}）..."
+echo "[3/6] 安装分析引擎 pyseqrna（锁定 ${PYSEQRNA_TAG}）..."
 if [ ! -d "$HOME/pyseqrna/.git" ]; then
   rm -rf "$HOME/pyseqrna"
   git clone --depth 1 --branch "$PYSEQRNA_TAG" \
@@ -69,7 +69,7 @@ fi
 pip install -e "$HOME/pyseqrna"
 
 # 4. 复制网页应用，并按 requirements.txt 安装网页依赖（首次安装后用 requirements-lock.txt 快照固定）
-echo "[4/5] 复制网页应用并安装依赖..."
+echo "[4/6] 复制网页应用并安装依赖..."
 APP_SRC="$(cd "$(dirname "$0")" && pwd)/app"
 if [ -d "$APP_SRC" ]; then
   rm -rf "$HOME/rna_web_app"
@@ -93,8 +93,20 @@ else
 fi
 git -C "$HOME/pyseqrna" rev-parse HEAD > "$HOME/rna_web_app/PYSEQRNA_COMMIT.txt" 2>/dev/null || true
 
-# 5. 预下载富集基因集库（GO/KEGG，让富集功能离线可用）
-echo "[5/5] 预下载富集基因集库（GO/KEGG，约 1-2 分钟）..."
+# 5. 安装 R/DESeq2（网页默认 deseq2 引擎；失败只警告，网页回退 pydiffexpress）
+# conda activate pyseqrna 已在上方完成，这里 Rscript 直接走环境 PATH。
+echo "[5/6] 安装 R/DESeq2 差异分析组件..."
+if Rscript -e "suppressMessages(library(DESeq2))" 2>/dev/null; then
+  echo "     R/DESeq2 已存在，跳过"
+else
+  if ! conda install -n pyseqrna -c conda-forge -c bioconda -y \
+      r-base rpy2 bioconductor-deseq2 r-pheatmap r-readxl; then
+    echo "     警告：R/DESeq2 安装失败，网页将回退 pydiffexpress 引擎（差异分析标准度降低），可稍后手动重装"
+  fi
+fi
+
+# 6. 预下载富集基因集库（GO/KEGG，让富集功能离线可用）
+echo "[6/6] 预下载富集基因集库（GO/KEGG，约 1-2 分钟）..."
 cd "$HOME/rna_web_app" && python - << 'PY'
 import sys
 from pathlib import Path

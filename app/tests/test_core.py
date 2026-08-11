@@ -70,6 +70,14 @@ def test_build_ini_skip_trim_switches_quality_trim(tmp_path: Path):
     assert "quality_trim = True" in ini2
 
 
+def test_build_ini_diffexp_tool_defaults_to_deseq2(tmp_path: Path):
+    ini = config_builder.build_ini(_params(tmp_path))
+    assert "diffexp_tool = deseq2" in ini
+    ini2 = config_builder.build_ini(
+        {**_params(tmp_path), "diffexp_tool": "pydiffexpress"})
+    assert "diffexp_tool = pydiffexpress" in ini2
+
+
 # ---------------------------------------------------------------- config
 def test_load_config_defaults():
     cfg = config.load_config()

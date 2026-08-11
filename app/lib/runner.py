@@ -57,6 +57,10 @@ def env_with_bindir() -> dict:
     env = os.environ.copy()
     bindir = str(Path(sys.executable).resolve().parent)
     env["PATH"] = bindir + os.pathsep + env.get("PATH", "")
+    # rpy2 需要显式 R_HOME（conda 的 R 不在默认搜索路径）
+    r_home = Path(bindir).parent / "lib" / "R"
+    if r_home.is_dir():
+        env["R_HOME"] = str(r_home)
     return env
 
 
@@ -69,6 +73,20 @@ def pyseqrna_executable() -> str:
     if found:
         return found
     return "pyseqrna"
+
+
+def _diffexp_tool_from_ini(ini_path: Path) -> str:
+    """逐行读 run.ini 的 diffexp_tool（config_builder 生成，无注释）。"""
+    try:
+        for line in Path(ini_path).read_text(encoding="utf-8").splitlines():
+            if "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            if key.strip() == "diffexp_tool":
+                return value.strip()
+    except OSError:
+        pass
+    return ""
 
 
 def start_run(ini_path: Path, cwd: Path, log_path: Path) -> subprocess.Popen:
@@ -87,8 +105,14 @@ def start_run(ini_path: Path, cwd: Path, log_path: Path) -> subprocess.Popen:
     log_path.parent.mkdir(parents=True, exist_ok=True)
     f = open(log_path, "wb", buffering=0)
     try:
+        # deseq2 引擎：pyseqrna 不输出 VST 矩阵/热图，用 bash 包装层串 R 后处理
+        if _diffexp_tool_from_ini(ini_path) == "deseq2":
+            wrapper = Path(__file__).resolve().parent.parent / "r_scripts" / "run_pipeline.sh"
+            cmd = ["bash", str(wrapper), "-c", str(ini_path)]
+        else:
+            cmd = [pyseqrna_executable(), "-c", str(ini_path)]
         proc = subprocess.Popen(
-            [pyseqrna_executable(), "-c", str(ini_path)],
+            cmd,
             cwd=str(cwd),
             env=env_with_bindir(),
             stdout=f,
@@ -106,7 +130,7 @@ def start_run(ini_path: Path, cwd: Path, log_path: Path) -> subprocess.Popen:
 def stop_run(pid: int) -> None:
     """停止一次分析：先礼后兵（SIGTERM → 5 秒不走 → SIGKILL），整组杀。
 
-    动手前复核 pid 身份（cmdline 含 pyseqrna）：调用方查找活动运行与
+    动手前复核 pid 身份（cmdline 含 pyseqrna 或 run_pipeline.sh）：调用方查找活动运行与
     用户点停止之间存在时间差，极端情况下原进程已死、pid 被操作系统
     复用给无关程序，不复核可能误杀别人的进程组。
     """
@@ -148,7 +172,8 @@ def _pid_alive(pid: int) -> bool:
 
     只看 pid 数字有一个坑：分析异常死掉后，操作系统可能把这个号码分给别的
     程序，网页就会永远"连接"到一个不相干的进程上（僵尸运行）。所以进一步
-    看 /proc/<pid>/cmdline 里有没有 pyseqrna。
+    看 /proc/<pid>/cmdline 里有没有 pyseqrna；deseq2 引擎外层是
+    run_pipeline.sh，也需要认它，否则活动标记会被误判成死进程。
     """
     try:
         os.kill(pid, 0)
@@ -157,7 +182,7 @@ def _pid_alive(pid: int) -> bool:
     try:
         content = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\x00", b" ").decode(
             errors="replace")
-        return "pyseqrna" in content
+        return "pyseqrna" in content or "run_pipeline.sh" in content
     except OSError:
         return True  # 读不到 /proc（非 Linux）时退化为只查活
 
@@ -256,13 +281,17 @@ def read_progress(log_path: Path, proc, checkpoint: Path) -> dict:
     # 横幅实际带版本号（"End of PySeqRNA 1.0.0 Session"），整串匹配会漏
     log_ended = any("End of PySeqRNA" in l and "Session" in l for l in lines)
     failed_log = any("Pipeline execution failed" in l for l in lines)
+    # DESeq2 模式下 wrapper 在 pyseqrna 结束后还要跑 R/VST 后处理，
+    # 仅靠 pyseqrna 的结束横幅判完成会把后处理阶段漏掉
+    wrapper_mode = any("DESeq2 后处理开始" in l for l in lines)
+    wrapper_finished = any("Wrapper pipeline finished" in l for l in lines)
 
     done = False
     rc = None
     if proc is not None and proc.poll() is not None:
         rc = proc.returncode  # RunningPid 重连场景下为 None（未知）
         done = True
-    if not done and log_ended:
+    if not done and log_ended and (not wrapper_mode or wrapper_finished):
         done = True  # 无进程句柄时靠日志判结束；成败用失败标记 + checkpoint
 
     success = False

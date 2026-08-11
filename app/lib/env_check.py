@@ -25,6 +25,12 @@ TOOLS = [
      "hint": "conda install -c conda-forge -c bioconda fastqc"},
     {"name": "trim_galore", "bin": "trim_galore", "cmd": "trim_galore --version",
      "hint": "conda install -c conda-forge -c bioconda trim-galore"},
+    # R/DESeq2：cmd 用 list，避免 -e "library(...)" 被 split() 拆坏
+    {"name": "R/DESeq2", "bin": "Rscript",
+     "cmd": ["Rscript", "-e",
+     "suppressMessages(library(DESeq2)); cat(as.character(packageVersion(\"DESeq2\")))"],
+     "hint": "在 WSL 里执行 ~/miniconda3/envs/pyseqrna/bin/conda install -n pyseqrna -c conda-forge -c bioconda r-base rpy2 bioconductor-deseq2",
+     "timeout": 90},
 ]
 
 
@@ -33,9 +39,13 @@ def check_tool(tool: dict) -> dict:
     # which 也走扩展后的 PATH，否则解释器 bin 目录里的工具查不到
     if shutil.which(tool["bin"], path=env_with_bindir()["PATH"]) is None:
         return {"name": name, "ok": False, "version": "", "hint": tool["hint"]}
+    # 普通工具仍是字符串命令；R/DESeq2 用 list 保留带引号的 R 表达式
+    cmd = tool["cmd"]
+    cmd_args = cmd if isinstance(cmd, list) else cmd.split()
     try:
         out = subprocess.run(
-            tool["cmd"].split(), capture_output=True, text=True, timeout=15,
+    cmd_args, capture_output=True, text=True,
+    timeout=tool.get("timeout", 15),
             env=env_with_bindir(),  # PATH 前插 bin 目录，但不碰全局环境
         )
         version = (out.stdout or out.stderr).strip().splitlines()
