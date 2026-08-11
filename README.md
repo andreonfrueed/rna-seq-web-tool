@@ -13,6 +13,8 @@
 
 一个给**湿实验室**用的本地 RNA 测序分析网页工具：不用写代码，在浏览器里上传测序数据，剩下的比对、数基因、找差异、做富集全自动完成。**数据全程在你自己的电脑上，不上传任何服务器。**
 
+![主界面](docs/screenshot.png)
+
 ### ✨ 功能特性
 
 - **一键安装**：双击 `一键安装.bat`，自动装好 WSL 环境、Miniconda 和全部分析工具
@@ -80,6 +82,8 @@ cd app && python -m pytest tests/    # 51 passed
 
 A **local-first RNA-seq analysis web app for wet labs**: upload sequencing data in your browser and get alignment, quantification, differential expression and enrichment analysis done automatically — no coding required. **Your data never leaves your computer.**
 
+![Main UI](docs/screenshot.png)
+
 ### ✨ Features
 
 - **One-click install**: double-click `一键安装.bat` to set up WSL, Miniconda and all bioinformatics tools automatically
@@ -125,3 +129,7 @@ cd app && python -m pytest tests/    # 51 passed
 ### 🙏 Acknowledgements
 
 Built on top of [PySeqRNA](https://github.com/navduhan/pyseqrna) (GPL-3.0), HISAT2, STAR, FastQC, Trim Galore, gseapy / Enrichr and Streamlit.
+
+---
+
+**License**: [GPL-3.0](LICENSE)
