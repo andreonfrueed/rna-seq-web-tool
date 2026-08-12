@@ -6,3 +6,6 @@ __pycache__/
 # 运行期产物（不随分发包走）
 app/run.ini
 *.active.json
+
+# WSL ʵ����ʱĿ¼������⣩
+.wsl-verify/
