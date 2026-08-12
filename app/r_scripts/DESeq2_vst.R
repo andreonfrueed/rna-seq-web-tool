@@ -366,6 +366,71 @@ render_volcanoes <- function(outdir, gene_labels) {
   invisible(NULL)
 }
 
+render_ma_plots <- function(outdir) {
+  diff_dir <- file.path(outdir, "4.Differential_Expression")
+  if (!dir.exists(diff_dir)) {
+    return(invisible(NULL))
+  }
+  csv_files <- list.files(diff_dir, pattern = "^DESeq2_.*_vs_.*\\.csv$",
+                          full.names = TRUE)
+  for (f in csv_files) {
+    tryCatch({
+      deg_df <- utils::read.csv(f, stringsAsFactors = FALSE)
+      if (!all(c("baseMean", "log2FoldChange", "padj") %in% names(deg_df))) {
+        next
+      }
+      keep <- !is.na(deg_df$baseMean) & !is.na(deg_df$log2FoldChange) &
+        is.finite(deg_df$baseMean) & is.finite(deg_df$log2FoldChange) &
+        deg_df$baseMean > 0
+      plot_df <- deg_df[keep, , drop = FALSE]
+      if (nrow(plot_df) == 0L) {
+        next
+      }
+      padj <- plot_df$padj
+      padj[is.na(padj)] <- 1
+      sig <- padj < 0.05 & abs(plot_df$log2FoldChange) >= 1
+      col <- ifelse(sig & plot_df$log2FoldChange > 0, "#C1666B",
+                    ifelse(sig & plot_df$log2FoldChange < 0, "#6B8EAE", "#C8C8C8"))
+      base <- basename(f)
+      parts <- regmatches(base, regexec("^DESeq2_(.*)_vs_(.*)\\.csv$", base))[[1L]]
+      if (length(parts) != 3L) {
+        next
+      }
+      c1 <- parts[[2L]]
+      c2 <- parts[[3L]]
+      ma_dir <- file.path(outdir, "5.Visualization", "MA_plots")
+      dir.create(ma_dir, recursive = TRUE, showWarnings = FALSE)
+      ma_png <- file.path(ma_dir, paste0(c1, "_vs_", c2, "_MA.png"))
+      grDevices::png(ma_png, width = 8, height = 6.5, units = "in", res = 300)
+      graphics::par(mar = c(5.0, 5.0, 1.2, 1.2))
+      x <- log2(plot_df$baseMean)
+      y <- plot_df$log2FoldChange
+      graphics::plot(x, y, col = col, pch = 16, cex = 0.6,
+                     xlab = "log2(mean expression)", ylab = "log2 Fold Change",
+                     cex.lab = 1.3, cex.axis = 1.1)
+      graphics::abline(h = 0, col = "gray50", lty = 2)
+      ok <- is.finite(x) & is.finite(y)
+      if (sum(ok) > 20) {
+        smooth <- stats::lowess(x[ok], y[ok], f = 0.3)
+        graphics::lines(smooth, col = "#2F618C", lwd = 1.6)
+      }
+      graphics::legend("topright", inset = 0.02,
+                       legend = c(sprintf("Up (%d)", sum(sig & plot_df$log2FoldChange > 0)),
+                                  sprintf("Down (%d)", sum(sig & plot_df$log2FoldChange < 0)),
+                                  "Not significant"),
+                       col = c("#C1666B", "#6B8EAE", "#C8C8C8"),
+                       pch = 16, bty = "n", cex = 0.9)
+      grDevices::dev.off()
+    }, error = function(e) {
+      if (grDevices::dev.cur() > 1L) {
+        grDevices::dev.off()
+      }
+      warning(paste0("MA 图生成失败，已跳过: ", conditionMessage(e)), call. = FALSE)
+    })
+  }
+  invisible(NULL)
+}
+
 main <- function() {
   args <- parse_args(commandArgs(trailingOnly = TRUE))
   check_packages()
@@ -433,6 +498,7 @@ main <- function() {
 
   run_deseq_results(dds, condition_levels, symbol_map, args$outdir)
   render_volcanoes(args$outdir, args$gene_labels)
+  render_ma_plots(args$outdir)
   render_pca(vst_mat, col_data, args$outdir)
 
   if (nrow(vst_mat) >= 2L) {

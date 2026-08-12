@@ -9,5 +9,7 @@ pyyaml
 gseapy
 pandas
 matplotlib
+# 论文级补充图：VST 版 t-SNE（缺失时自动跳过 t-SNE，其余图不受影响）
+scikit-learn
 # 测试
 pytest

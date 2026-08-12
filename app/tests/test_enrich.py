@@ -1,6 +1,7 @@
 """enrich_py.py 的离线单元测试（不联网、不需要 gseapy）。"""
 from __future__ import annotations
 import json
+import math
 from pathlib import Path
 
 import pytest
@@ -139,3 +140,61 @@ def test_rewrite_produced_paths(tmp_path: Path):
     produced = {"LPS-C/GO_result.csv": p}
     out = ep._rewrite_produced_paths(produced, tmp, final)
     assert out["LPS-C/GO_result.csv"] == final / "LPS-C" / "up" / "GO_result.csv"
+
+
+# ---------------------------------------------------------------- GSEA（RED-06）
+def test_collect_deseq_tables(tmp_path: Path):
+    d = tmp_path / "diff"
+    d.mkdir()
+    (d / "DESeq2_LPS_vs_C.csv").write_text("x")
+    (d / "DESeq2_T_vs_C.csv").write_text("x")
+    (d / "other.csv").write_text("x")
+    out = ep.collect_deseq_tables(d)
+    assert set(out) == {"LPS-C", "T-C"}
+    assert ep.collect_deseq_tables(tmp_path / "nope") == {}
+
+
+def test_build_ranking_signed_pvalue(tmp_path: Path):
+    csv = tmp_path / "DESeq2_LPS_vs_C.csv"
+    csv.write_text(
+        "Gene,Symbol,baseMean,log2FoldChange,lfcSE,stat,pvalue,padj\n"
+        "ENSG1,TP53,100,2.0,0.1,20,1e-10,1e-9\n"      # 上调显著 → 正分
+        "ENSG2,BRCA1,100,-1.5,0.1,-15,1e-8,1e-7\n"    # 下调显著 → 负分
+        "ENSG3,no_padj,10,3.0,0.1,30,0.01,\n"          # padj 缺失 → 过滤
+        "ENSG4,bad_lfc,10,abc,0.1,1,0.5,0.6\n"         # lfc 非数字 → 过滤
+        "ENSG5,padj_zero,10,1.0,0.1,10,0.0,0.0\n",     # padj=0 → 过滤
+        encoding="utf-8")
+    rows = ep.build_ranking(csv)
+    assert rows == [("TP53", -math.log10(1e-9)), ("BRCA1", -math.log10(1e-7) * -1)]
+
+
+def test_run_enrichment_method_dispatch(monkeypatch, tmp_path: Path):
+    """分发器：method=gsea 走 run_gsea，ora 走 run_ora，非法值抛错。"""
+    calls = []
+
+    def fake_gsea(*a, **k):
+        calls.append("gsea")
+        return {}, {}, []
+
+    def fake_ora(*a, **k):
+        calls.append("ora")
+        return {}, {}, []
+
+    monkeypatch.setattr(ep, "run_gsea", fake_gsea)
+    monkeypatch.setattr(ep, "run_ora", fake_ora)
+    ep.run_enrichment(tmp_path, tmp_path, "hsapiens", tmp_path, tmp_path,
+                      method="gsea")
+    ep.run_enrichment(tmp_path, tmp_path, "hsapiens", tmp_path, tmp_path,
+                      method="ora")
+    assert calls == ["gsea", "ora"]
+    with pytest.raises(ValueError, match="不支持的富集方法"):
+        ep.run_enrichment(tmp_path, tmp_path, "hsapiens", tmp_path, tmp_path,
+                          method="foo")
+
+
+def test_run_gsea_requires_deseq_tables(monkeypatch, tmp_path: Path):
+    """没有 DESeq2 差异表时 GSEA 直接报错（UI 会提示改用 ORA）。"""
+    monkeypatch.setattr(ep, "_require_gp", lambda: None)  # 跳过 gseapy 检查
+    with pytest.raises(ValueError, match="DESeq2 差异表"):
+        ep.run_gsea(tmp_path, tmp_path / "x.gtf", "hsapiens",
+                    tmp_path / "cache", tmp_path / "out")

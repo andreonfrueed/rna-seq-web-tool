@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10-blue)
 ![Streamlit](https://img.shields.io/badge/Streamlit-1.61-FF4B4B)
 ![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11%20%2B%20WSL2-lightgrey)
-![Tests](https://img.shields.io/badge/tests-51%20passed-brightgreen)
+![Tests](https://img.shields.io/badge/tests-70%20passed-brightgreen)
 
 **中文** | [English](#-english)
 
@@ -29,7 +29,7 @@
 - **论文级差异分析**：默认用 **R DESeq2**（log2FC + padj），并输出 **VST 标准化矩阵**；样本聚类热图与差异基因热图基于 VST 绘制，符合论文标准做法；RPKM 表仍保留供浏览
 - **开跑前自检**：磁盘空间（能穿透 WSL 虚拟盘检测到真实的 Windows 盘）、FASTQ 完整性、分析环境，有问题当场拦下，而不是几小时后才发现
 - **实时进度与断线重连**：浏览器关了重开也能接上进度；中途想停，一键安全停止
-- **结果一目了然**：火山图/热图/PCA 直接预览，表格和图单个下载或打包 ZIP；GO/KEGG 富集按「比较 × 上调/下调」分别出结果，目录直接标明方向（如 `LPS高于C`）
+- **结果一目了然**：火山图/热图/PCA/MA 图直接预览，表格和图单个下载或打包 ZIP；**GO/KEGG 富集默认 GSEA**（全基因排序富集，输出 NES/fdr，论文主流方法），也可切回经典 ORA（上调/下调分别富集）；VST 版 t-SNE、差异基因 Venn/UpSet 等论文级补充图自动生成
 - **放心清理**：一键删除 BAM、索引等中间大文件，结果表格与图片完整保留
 
 ### 🔬 分析流程
@@ -70,16 +70,16 @@ flowchart LR
 ├── setup_env.sh              # WSL 内的一键安装脚本
 ├── app/
 │   ├── app.py                # Streamlit 页面与交互
-│   ├── lib/                  # 后端：运行器、预检、参考文件、结果、富集等
-│   ├── r_scripts/            # R/DESeq2 后处理（VST 矩阵与热图）
-│   └── tests/                # pytest 测试（51 项）
+│   ├── lib/                  # 后端：运行器、预检、参考文件、结果、富集（GSEA/ORA）、补充图
+│   ├── r_scripts/            # R/DESeq2 后处理（VST 矩阵、热图、火山图、MA 图）
+│   └── tests/                # pytest 测试（70 项）
 └── archive/                  # 归档的一次性数据修复脚本
 ```
 
 ### 🧪 测试
 
 ```bash
-cd app && python -m pytest tests/    # 51 passed
+cd app && python -m pytest tests/    # 70 passed
 ```
 
 ### 🙏 致谢
@@ -140,7 +140,7 @@ See [使用说明.md](使用说明.md) for the full guide (Chinese).
 ### 🧪 Tests
 
 ```bash
-cd app && python -m pytest tests/    # 51 passed
+cd app && python -m pytest tests/    # 70 passed
 ```
 
 ### 🙏 Acknowledgements

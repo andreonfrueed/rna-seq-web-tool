@@ -23,8 +23,8 @@ try:
 except Exception:  # 没装自动刷新包时退回手动刷新
     st_autorefresh = None
 
-from lib import (config, config_builder, enrich_py, env_check, preflight,
-                 reference, results, runner, sample_sheet)
+from lib import (config, config_builder, enrich_py, env_check, plots,
+                 preflight, reference, results, runner, sample_sheet)
 
 VERSION = "2.1"
 
@@ -997,10 +997,11 @@ def _enrich_zip_button(enrich_out: Path, key_prefix: str) -> None:
 
 
 def _render_enrich_files(enrich_out: Path, key_prefix: str) -> bool:
-    """按 比较×方向 分组展示富集产物（从磁盘读，刷新后仍在）。
+    """按富集方法分组展示产物（从磁盘读，刷新后仍在）。
 
-    有内容返回 True。目录结构为 enrich_out/比较名/up|down/GO_result.csv 等；
-    "_" 开头的条目（gseapy 草稿、_stats.json）不展示。
+    GSEA：目录结构为 enrich_out/比较名/GSEA_result.csv 等；
+    ORA：enrich_out/比较名/up|down/GO_result.csv 等。
+    "_" 开头的条目（gseapy 草稿、_stats.json）不展示。有内容返回 True。
     """
     if not enrich_out.exists():
         return False
@@ -1018,6 +1019,62 @@ def _render_enrich_files(enrich_out: Path, key_prefix: str) -> bool:
             stats_map, skipped = d.get("stats", {}), d.get("skipped", [])
         except Exception:
             pass
+    if _enrich_out_is_gsea(enrich_out):
+        return _render_gsea_files(enrich_out, files, stats_map, skipped, key_prefix)
+    return _render_ora_files(enrich_out, files, stats_map, skipped, key_prefix)
+
+
+def _render_gsea_files(enrich_out: Path, files: list[Path],
+                       stats_map: dict[str, dict], skipped: list[str],
+                       key_prefix: str) -> bool:
+    """GSEA 产物展示：每比较一目录（结果表 + NES 条形图 + 富集曲线图）。"""
+    groups: dict[str, dict[str, Path]] = {}
+    for p in files:
+        rel = p.relative_to(enrich_out)
+        parts = rel.parts
+        if len(parts) < 2:
+            continue
+        gkey, fname = parts[0], "/".join(parts[1:])
+        groups.setdefault(gkey, {})[fname] = p
+    for gkey in sorted(groups):
+        name_map = groups[gkey]
+        st.markdown(f"**{gkey}**")
+        s = stats_map.get(gkey)
+        if s:
+            top = f"；最显著：{s['top_term']}" if s.get("top_term") else ""
+            st.caption(f"{s.get('genes', '?')} 个基因参与排序，匹配基因集 {s.get('matched', '?')} 个；"
+                       f"显著通路 {s.get('sig_terms', '?')} 个（fdr<0.25）{top}")
+        csv = name_map.get("GSEA_result.csv")
+        if csv:
+            st.download_button("⬇️ 下载 GSEA 结果表 (CSV)", data=csv.read_bytes(),
+                               file_name=f"{gkey}_GSEA_result.csv",
+                               key=f"{key_prefix}_{gkey}_gsea_csv")
+        bar = name_map.get("GSEA_NES_barplot.png")
+        if bar:
+            st.image(str(bar), caption="Top NES 条形图", use_container_width=True)
+            st.download_button("⬇️ 下载条形图", data=bar.read_bytes(),
+                               file_name=f"{gkey}_GSEA_NES_barplot.png",
+                               key=f"{key_prefix}_{gkey}_bar")
+        curves = [fname for fname in name_map if fname.startswith("GSEA_plots/")]
+        if curves:
+            with st.expander(f"📈 显著通路富集曲线（{len(curves)} 张）"):
+                for fname in sorted(curves):
+                    p = name_map[fname]
+                    st.image(str(p), caption=fname.rsplit("/", 1)[-1],
+                             use_container_width=True)
+                    st.download_button(f"⬇️ 下载 {fname.rsplit('/', 1)[-1]}",
+                                       data=p.read_bytes(),
+                                       file_name=f"{gkey}_{fname.rsplit('/', 1)[-1]}",
+                                       key=f"{key_prefix}_{gkey}_{fname}")
+    if skipped:
+        st.caption("已跳过：" + "；".join(skipped))
+    return True
+
+
+def _render_ora_files(enrich_out: Path, files: list[Path],
+                      stats_map: dict[str, dict], skipped: list[str],
+                      key_prefix: str) -> bool:
+    """ORA 产物展示：按 比较×方向 分组（GO/KEGG 表 + 气泡图）。"""
     groups: dict[str, dict[str, Path]] = {}
     for p in files:
         rel = p.relative_to(enrich_out)
@@ -1063,12 +1120,18 @@ def _render_enrich_files(enrich_out: Path, key_prefix: str) -> bool:
     return True
 
 
-def _do_enrich(run_dir: Path, gtf: Path, species: str) -> None:
+def _enrich_out_is_gsea(enrich_out: Path) -> bool:
+    """富集目录里有没有 GSEA 产物（用于展示与重跑逻辑）。"""
+    return any(p.name == "GSEA_result.csv" for p in enrich_out.rglob("*"))
+
+
+def _do_enrich(run_dir: Path, gtf: Path, species: str, method: str) -> None:
     """跑富集并展示结果（供"做富集"和"重新运行富集"两个入口复用）。
 
     进度条通过 enrich_py 的 progress_cb 实时更新（解析 GTF / 拉基因库 / 逐组富集）。
     """
-    with st.status("正在按 比较×上调/下调 分别跑富集（首次需联网拉取基因集库）…",
+    method_cn = "GSEA（全基因排序富集）" if method == "gsea" else "ORA（上调/下调分别富集）"
+    with st.status(f"正在按比较跑{method_cn}（首次需联网拉取基因集库）…",
                    expanded=True) as status:
         bar = st.progress(0.0)
 
@@ -1081,13 +1144,23 @@ def _do_enrich(run_dir: Path, gtf: Path, species: str) -> None:
             cache_dir=WORKSPACE / "enrich_cache",
             outdir=run_dir / "enrich_py",
             progress_cb=cb,
+            method=method,
         )
         status.update(label="富集完成", state="complete")
-    st.success("富集完成！已按每个比较的「上调」「下调」分别出结果：")
+    if method == "gsea":
+        st.success("GSEA 完成！每个比较按全部基因排序做富集：NES 为正 = 该通路在高表达组富集，"
+                   "NES 为负 = 在低表达组富集。")
+    else:
+        st.success("富集完成！已按每个比较的「上调」「下调」分别出结果：")
     for label, s in stats.items():
-        st.caption(
-            f"{label}：差异基因 {s['total']} 个，映射基因名 {s['mapped']} 个"
-            f"（未映射 {s['unmapped']} 个）；GO 匹配 {s['matched_go']}、KEGG 匹配 {s['matched_kegg']}")
+        if method == "gsea":
+            top = f"；最显著：{s['top_term']}" if s.get("top_term") else ""
+            st.caption(f"{label}：{s['genes']} 个基因参与排序，匹配基因集 {s['matched']} 个；"
+                       f"显著通路 {s['sig_terms']} 个（fdr<0.25）{top}")
+        else:
+            st.caption(
+                f"{label}：差异基因 {s['total']} 个，映射基因名 {s['mapped']} 个"
+                f"（未映射 {s['unmapped']} 个）；GO 匹配 {s['matched_go']}、KEGG 匹配 {s['matched_kegg']}")
     if skipped:
         st.warning("以下分组被跳过：" + "；".join(skipped))
     if species == "mmusculus":
@@ -1145,6 +1218,14 @@ def tab_results() -> None:
         st.caption("RPKM 表保留供浏览；本次分析另输出 VST 标准化矩阵"
                    "（VST_normalized_counts.csv），论文级热图/下游分析请用 VST。")
 
+    # ---- 论文级补充图（VST t-SNE / 差异基因 Venn / UpSet），缺啥补啥 ----
+    if (outdir / "4.Normalization" / "VST_normalized_counts.csv").exists():
+        with st.spinner("生成论文级补充图（t-SNE / Venn / UpSet）…"):
+            try:
+                plots.ensure_aux_plots(run_dir)
+            except Exception:
+                pass  # 补充图失败不影响结果页
+
     # ---- 图片预览：火山图/热图等直接看，不用先下载 ----
     pngs = [p for files in groups.values() for p in files if p.suffix.lower() == ".png"]
     volcano_dir = outdir / "5.Visualization" / "Volcano"
@@ -1193,11 +1274,32 @@ def tab_results() -> None:
             st.caption("分析运行中，结束后才能操作")
 
     st.divider()
-    st.subheader("🧬 GO/KEGG 富集（按 比较×上调/下调 分别出结果）")
-    st.caption("方向说明：比较「X-Y」= X 组相对于 Y 组；目录已直接标明谁高谁低"
-               "（旧版 up/down 目录：up = 前一组更高）。")
+    st.subheader("🧬 GO/KEGG 富集")
     species = _run_species(run_dir)
     gtf = _run_feature_file(run_dir)
+
+    # 富集方法：GSEA 需要 DESeq2 引擎的全基因差异表；否则自动回退 ORA
+    diff_dir = outdir / "4.Differential_Expression"
+    has_deseq = diff_dir.exists() and any(diff_dir.glob("DESeq2_*_vs_*.csv"))
+    method_label = st.selectbox(
+        "富集方法",
+        ["GSEA（推荐：全基因排序富集，论文级）", "ORA（经典：上调/下调基因分别富集）"],
+        index=0 if has_deseq else 1,
+        key=f"enrich_method_{run_name}",
+        help="GSEA 用全部基因按表达差异排序做富集（输出 NES/fdr），是当前论文主流方法；"
+             "ORA 只对显著差异基因做经典过表达分析。",
+    )
+    enrich_method = "gsea" if method_label.startswith("GSEA") else "ora"
+    if enrich_method == "gsea" and not has_deseq:
+        st.warning("该次分析没有 DESeq2 差异表（旧结果或用了 pydiffexpress 引擎），"
+                   "GSEA 不可用，已自动切到 ORA。")
+        enrich_method = "ora"
+    if enrich_method == "gsea":
+        st.caption("GSEA 方向说明：NES 为正 = 通路在高表达组富集，为负 = 在低表达组富集；"
+                   "显著阈值 fdr<0.25（论文通用标准）。")
+    else:
+        st.caption("ORA 方向说明：比较「X vs Y」= X 组相对于 Y 组；上调 = X 组更高。")
+
     has_results = _render_enrich_files(enrich_out, key_prefix=f"rich_{run_name}")
     if has_results:
         if gtf and gtf.exists():
@@ -1205,19 +1307,23 @@ def tab_results() -> None:
                          disabled=running_this):
                 shutil.rmtree(enrich_out, ignore_errors=True)
                 try:
-                    _do_enrich(run_dir, gtf, species)
+                    _do_enrich(run_dir, gtf, species, enrich_method)
                 except Exception as e:
                     st.error(f"富集失败：{e}")
             if running_this:
                 st.caption("分析运行中，结束后才能操作")
     else:
-        st.caption("读该次分析的差异基因名单，按每个比较的「上调」「下调」分别跑 GO/KEGG 富集。"
-                   "首次运行从 Enrichr 下载基因集库（需联网，缓存后离线）。")
+        if enrich_method == "gsea":
+            st.caption("读取该次分析的 DESeq2 全基因差异表，按每个比较做 GSEA"
+                       "（首次运行从 Enrichr 下载基因集库，缓存后离线）。")
+        else:
+            st.caption("读取该次分析的差异基因名单，按每个比较的「上调」「下调」分别跑 GO/KEGG 富集。"
+                       "首次运行从 Enrichr 下载基因集库（需联网，缓存后离线）。")
         if not gtf or not gtf.exists():
             st.warning("找不到该次分析的注释文件（GTF），无法做基因名映射。")
         elif st.button("🚀 做 GO/KEGG 富集", type="primary", key=f"run_enrich_{run_name}"):
             try:
-                _do_enrich(run_dir, gtf, species)
+                _do_enrich(run_dir, gtf, species, enrich_method)
             except Exception as e:
                 st.error(f"富集失败：{e}")
 

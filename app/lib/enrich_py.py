@@ -1,18 +1,24 @@
 """GO/KEGG 富集（纯 Python：gseapy + Enrichr 基因集库）。
 
-按"比较 × X高于Y/X低于Y"分别富集——上调和下调基因涉及的通路往往相反，
-混在一起做会互相稀释，什么也看不出来。
+两种方法（网页可选，默认 GSEA）：
+- **GSEA（preranked gene set enrichment）**：对每个比较的全部基因按
+  排序分数（-log10(padj)×sign(log2FC)，论文标准做法）做基因集富集。
+  输出 NES/fdr 结果表、top NES 条形图与显著通路富集曲线图。
+  只支持 DESeq2 引擎（需要全基因 log2FC/padj 表）。
+- **ORA（over-representation，经典过表达分析）**：对每个比较的上调/下调
+  差异基因分别做富集（旧引擎/旧结果回退用）。
 
 流程：
-1. 读取 pyseqrna 的 diff_genes 目录：每个比较有 比较_up.txt（上调）、
-   比较_down.txt（下调）、比较.txt（全部 = 两者并集，有拆分时忽略它）。
+1. GSEA 读 DESeq2 差异表（DESeq2_X_vs_Y.csv）；ORA 读 pyseqrna 的
+   diff_genes 目录：每个比较有 比较_up.txt（上调）、比较_down.txt（下调）、
+   比较.txt（全部 = 两者并集，有拆分时忽略它）。
 2. 从 GTF 离线解析 ENSEMBL → 基因符号（逐行读，避免大文件吃内存）。
 3. 首次从 Enrichr 拉取 GO/KEGG 基因集库并缓存到本地（之后离线）。
    缓存文件名带物种，避免人/小鼠共用一份缓存导致张冠李戴；
    写入时附 sha256 旁路校验，防止缓存被篡改后悄悄影响富集结论。
 4. 匹配前把基因名和基因库统一转成大写——人基因全大写、小鼠首字母大写，
    大小写不一致会让小鼠 GO 富集静默匹配不到任何结果。
-5. gseapy.enrich 做富集 → 表格 CSV + 气泡图 PNG。
+5. gseapy 做富集 → 表格 CSV + 图表 PNG。
 6. 统计与跳过原因写进 outdir/_stats.json，网页刷新后仍能展示。
 
 原子提交（v2.1 新增）：富集先写进 <outdir>.partial 临时目录，全部跑完
@@ -23,6 +29,7 @@
 from __future__ import annotations
 import hashlib
 import json
+import math
 import re
 import shutil
 from pathlib import Path
@@ -320,9 +327,17 @@ def _rewrite_produced_paths(produced: dict[str, Path], tmp_root: Path, final_roo
     return out
 
 
-def run_enrichment(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
-                   outdir: Path, progress_cb=None) -> tuple[dict[str, Path], dict[str, dict[str, int]], list[str]]:
-    """对某次分析按 比较×上调/下调 分别跑 GO/KEGG 富集。
+def _finalize(tmp_outdir: Path, outdir: Path, produced: dict[str, Path]) -> dict[str, Path]:
+    """原子提交：删旧目录（若存在）→ rename 临时目录为正式目录，并改写路径。"""
+    if outdir.exists():
+        shutil.rmtree(outdir)
+    tmp_outdir.rename(outdir)
+    return _rewrite_produced_paths(produced, tmp_outdir, outdir)
+
+
+def run_ora(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
+            outdir: Path, progress_cb=None) -> tuple[dict[str, Path], dict[str, dict[str, int]], list[str]]:
+    """ORA（过表达分析）：对某次分析按 比较×上调/下调 分别跑 GO/KEGG 富集。
 
     返回 (产物文件 dict, 统计 dict, 跳过原因列表)。统计与跳过原因同时写进
     outdir/_stats.json，网页刷新后仍能展示匹配情况。
@@ -405,9 +420,235 @@ def run_enrichment(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
             "通常是基因名风格不一致，请把此提示截图反馈。")
 
     # 原子提交：删旧目录（若存在）→ rename 临时目录为正式目录
-    if outdir.exists():
-        shutil.rmtree(outdir)
-    tmp_outdir.rename(outdir)
-    produced = _rewrite_produced_paths(produced, tmp_outdir, outdir)
+    produced = _finalize(tmp_outdir, outdir, produced)
     cb(1.0, "富集完成")
     return produced, stats, skipped
+
+
+# ---------------------------------------------------------------- GSEA（preranked）
+
+_DESEQ_CSV_RE = re.compile(r"^DESeq2_(.*)_vs_(.*)\.csv$")
+
+# GSEA 显著性阈值（论文通用标准：fdr < 0.25）
+_GSEA_FDR = 0.25
+# 富集曲线图最多画几个显著通路（每个都要单独置换 1000 次，控制耗时）
+_GSEA_MAX_CURVES = 6
+
+
+def collect_deseq_tables(diff_dir: Path) -> dict[str, Path]:
+    """收集 DESeq2 差异表：{比较名(c1-c2): 文件路径}。
+
+    比较名从文件名解析（组名已在上游禁止 "_vs_" 与横杠，解析安全）。
+    """
+    d = Path(diff_dir)
+    out: dict[str, Path] = {}
+    if not d.exists():
+        return out
+    for f in sorted(d.glob("DESeq2_*_vs_*.csv")):
+        m = _DESEQ_CSV_RE.match(f.name)
+        if m:
+            out[f"{m.group(1)}-{m.group(2)}"] = f
+    return out
+
+
+def build_ranking(deseq_csv: Path) -> list[tuple[str, float]]:
+    """从 DESeq2 差异表构建 GSEA 排序列表：[(基因符号大写, 分数)]。
+
+    分数 = -log10(padj) × sign(log2FC)，论文标准做法（signed p-value）。
+    过滤掉 log2FC/padj 缺失、非有限或 padj=0（-log10 无定义）的基因。
+    """
+    import csv
+
+    rows: list[tuple[str, float]] = []
+    with open(deseq_csv, encoding="utf-8", errors="replace", newline="") as f:
+        for r in csv.DictReader(f):
+            sym = (r.get("Symbol") or "").strip()
+            if not sym:
+                continue
+            try:
+                lfc = float(r["log2FoldChange"])
+                padj = float(r["padj"])
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not (math.isfinite(lfc) and math.isfinite(padj) and padj > 0):
+                continue
+            score = -math.log10(padj) * (1.0 if lfc >= 0 else -1.0)
+            rows.append((sym.upper(), score))
+    return rows
+
+
+def _save_nes_barplot(res2d, png_path: Path, top: int = 10) -> None:
+    """top NES 条形图（上调/下调方向各 top），SCI 风格 300dpi。"""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import pandas as pd
+
+        df = pd.DataFrame(res2d)
+        if df.empty or "NES" not in df.columns:
+            return
+        df["NES"] = pd.to_numeric(df["NES"], errors="coerce")
+        df = df.dropna(subset=["NES"])
+        pos = df[df["NES"] > 0].nlargest(top, "NES")
+        neg = df[df["NES"] < 0].nsmallest(top, "NES")
+        plot_df = pd.concat([pos, neg.iloc[::-1]])
+        if plot_df.empty:
+            return
+        terms = [str(t)[:60] for t in plot_df["Term"]]
+        colors = ["#C1666B" if v > 0 else "#6B8EAE" for v in plot_df["NES"]]
+        fig, ax = plt.subplots(figsize=(8, max(3.5, 0.32 * len(plot_df))))
+        ax.barh(range(len(plot_df)), plot_df["NES"], color=colors, edgecolor="none")
+        ax.set_yticks(range(len(plot_df)))
+        ax.set_yticklabels(terms, fontsize=8)
+        ax.axvline(0, color="#444444", linewidth=0.8)
+        ax.set_xlabel("Normalized Enrichment Score (NES)", fontsize=10)
+        ax.grid(True, axis="x", color="#E3E3E3", linewidth=0.8, alpha=0.7)
+        ax.set_axisbelow(True)
+        fig.tight_layout()
+        fig.savefig(png_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
+    except Exception:
+        return
+
+
+def _gsea_curve_plots(rnk_df, gene_sets: dict[str, list[str]],
+                      term_names: list[str], outdir: Path) -> list[Path]:
+    """对显著通路单独跑 prerank（outdir 模式）生成经典 GSEA 富集曲线图。
+
+    gseapy 全库跑一次会为每个基因集各出一张图（几千张，不可接受），
+    所以只对 fdr<0.25 的 top 通路单独重跑（permutation 1000），
+    生成标准 gsea_<term>.png 富集曲线。失败只跳过，不影响主结果。
+    """
+    paths: list[Path] = []
+    od = outdir / "GSEA_plots"
+    od.mkdir(parents=True, exist_ok=True)
+    for term in term_names[:_GSEA_MAX_CURVES]:
+        genes = gene_sets.get(term)
+        if not genes:
+            continue
+        try:
+            gp.prerank(rnk=rnk_df, gene_sets={term: genes}, outdir=str(od),
+                       min_size=3, max_size=5000, permutation_num=1000,
+                       seed=42, no_plot=False, verbose=False)
+        except Exception:
+            continue
+    for p in sorted(od.glob("*.png")):
+        paths.append(p)
+    return paths
+
+
+def run_gsea(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
+             outdir: Path, progress_cb=None) -> tuple[dict[str, Path], dict[str, dict[str, int]], list[str]]:
+    """preranked GSEA：对每个比较的全部基因（按 signed -log10(padj) 排序）做 GO/KEGG 富集。
+
+    只支持 DESeq2 引擎（需要全基因 log2FC/padj 表）；没有 DESeq2 表时抛错，
+    调用方应提示改用 ORA。输出每比较一个目录：
+      GSEA_result.csv（全表：ES/NES/pval/fdr）、GSEA_NES_barplot.png、
+      GSEA_plots/gsea_<通路>.png（显著通路富集曲线，最多 6 张）。
+    返回与 run_ora 相同的 (produced, stats, skipped) 三元组。
+    """
+    run_dir, gtf, cache_dir, outdir = Path(run_dir), Path(gtf), Path(cache_dir), Path(outdir)
+    if species not in ("hsapiens", "mmusculus"):
+        raise ValueError(f"不支持的物种: {species}")
+    _require_gp()
+
+    def cb(p, msg):
+        if progress_cb:
+            progress_cb(min(max(p, 0.0), 1.0), msg)
+
+    diff_dir = run_dir / "output" / "4.Differential_Expression"
+    cb(0.05, "读取 DESeq2 差异表…")
+    tables = collect_deseq_tables(diff_dir)
+    if not tables:
+        raise ValueError(
+            "没有找到 DESeq2 差异表（GSEA 需要 DESeq2 引擎的结果）。\n"
+            "请用 DESeq2 引擎重新运行分析，或改用 ORA 富集方法。")
+
+    cb(0.10, "准备 GO/KEGG 基因集库（首次需联网）…")
+    go_sets: dict[str, list[str]] = {}
+    for n in GO_LIBS:
+        go_sets.update(_ensure_library(n, species, cache_dir))
+    kegg_sets = _ensure_library(_kegg_lib(species), species, cache_dir)
+    all_sets = {**go_sets, **kegg_sets}
+    universe = {g for s in all_sets.values() for g in s}
+
+    tmp_outdir = outdir.with_name(outdir.name + ".partial")
+    if tmp_outdir.exists():
+        shutil.rmtree(tmp_outdir, ignore_errors=True)  # 上次被打断的残留
+    tmp_outdir.mkdir(parents=True, exist_ok=True)
+
+    import pandas as pd
+
+    produced: dict[str, Path] = {}
+    stats: dict[str, dict[str, int]] = {}
+    skipped: list[str] = []
+    tasks = sorted(tables.items())
+
+    for i, (cmp_name, csv_path) in enumerate(tasks):
+        safe_cmp = _safe_name(cmp_name)
+        cb(0.15 + 0.80 * i / max(len(tasks), 1), f"GSEA 分析：{safe_cmp}（{i + 1}/{len(tasks)}）")
+        ranking = build_ranking(csv_path)
+        symbols = {sym for sym, _ in ranking}
+        entry = {"genes": len(ranking), "matched": len(symbols & universe),
+                 "sig_terms": 0, "top_term": ""}
+        stats[safe_cmp] = entry
+        if len(ranking) < 5:
+            skipped.append(f"{safe_cmp}：可排序基因只有 {len(ranking)} 个，太少")
+            continue
+        od = tmp_outdir / safe_cmp
+        od.mkdir(parents=True, exist_ok=True)
+        try:
+            rnk_df = pd.DataFrame(ranking, columns=["gene", "score"])
+            res = gp.prerank(rnk=rnk_df, gene_sets=all_sets,
+                             outdir=str(od / "_gseapy"),
+                             min_size=3, max_size=5000, permutation_num=1000,
+                             seed=42, no_plot=True, verbose=False)
+            res2d = res.res2d
+            if res2d is None or len(res2d) == 0:
+                skipped.append(f"{safe_cmp}：GSEA 没有产出结果")
+                continue
+            res2d.to_csv(od / "GSEA_result.csv", index=False)
+            produced[f"{safe_cmp}/GSEA_result.csv"] = od / "GSEA_result.csv"
+            bar = od / "GSEA_NES_barplot.png"
+            _save_nes_barplot(res2d, bar)
+            if bar.exists():
+                produced[f"{safe_cmp}/GSEA_NES_barplot.png"] = bar
+            if "fdr" in res2d.columns:
+                sig_df = res2d[pd.to_numeric(res2d["fdr"], errors="coerce") < _GSEA_FDR]
+                entry["sig_terms"] = int(len(sig_df))
+                if len(sig_df) > 0:
+                    entry["top_term"] = str(sig_df.iloc[0]["Term"])[:80]
+                    order = pd.to_numeric(sig_df["NES"], errors="coerce").abs() \
+                        .sort_values(ascending=False).index
+                    term_names = [str(t) for t in sig_df.loc[order, "Term"]]
+                    for c in _gsea_curve_plots(rnk_df, all_sets, term_names, od):
+                        rel = c.relative_to(od).as_posix()  # 统一正斜杠（Windows 测试环境也是）
+                        produced[f"{safe_cmp}/{rel}"] = c
+            if entry["matched"] == 0:
+                skipped.append(f"{safe_cmp}：基因名在 GO/KEGG 库里一个都没匹配上")
+        except Exception as e:
+            skipped.append(f"{safe_cmp} 的 GSEA 出错：{str(e)[:80]}")
+
+    (tmp_outdir / "_stats.json").write_text(
+        json.dumps({"stats": stats, "skipped": skipped}, ensure_ascii=False, indent=1),
+        encoding="utf-8")
+
+    if not produced:
+        detail = "；".join(skipped) if skipped else "无可用差异表"
+        shutil.rmtree(tmp_outdir, ignore_errors=True)
+        raise RuntimeError(f"所有比较的 GSEA 都没有产出结果（{detail}）。")
+
+    produced = _finalize(tmp_outdir, outdir, produced)
+    cb(1.0, "富集完成")
+    return produced, stats, skipped
+
+
+def run_enrichment(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
+                   outdir: Path, progress_cb=None, method: str = "gsea") -> tuple[dict[str, Path], dict[str, dict[str, int]], list[str]]:
+    """富集入口：method="gsea"（默认，preranked GSEA）或 "ora"（经典过表达分析）。"""
+    if method == "ora":
+        return run_ora(run_dir, gtf, species, cache_dir, outdir, progress_cb)
+    if method != "gsea":
+        raise ValueError(f"不支持的富集方法: {method}")
+    return run_gsea(run_dir, gtf, species, cache_dir, outdir, progress_cb)
