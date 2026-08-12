@@ -29,11 +29,14 @@
 from __future__ import annotations
 import hashlib
 import json
+import logging
 import math
 import re
 import shutil
 import time
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 # gseapy 只在真正跑富集时才需要（顶层导入会让没装 gseapy 的环境
 # 连本模块都 import 不了，网页其他功能也跟着挂）——惰性导入。
@@ -275,6 +278,7 @@ def _save_dotplot(df, png_path: Path, title: str, column: str = "Adjusted P-valu
         # title 参数保留兼容；新版气泡图按要求不渲染标题。
         fig.tight_layout()
         fig.savefig(png_path, dpi=300, bbox_inches="tight")
+        _audit_fig_png(fig, png_path)  # 出图自检（缺字/裁切/PNG 有效性）
         plt.close(fig)
     except Exception:
         return
@@ -437,6 +441,7 @@ def run_ora(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
 
     # 原子提交：删旧目录（若存在）→ rename 临时目录为正式目录
     produced = _finalize(tmp_outdir, outdir, produced)
+    _write_qa_report(produced, outdir)  # 出图自检报告（结果页可展示）
     cb(1.0, "富集完成")
     return produced, stats, skipped
 
@@ -511,6 +516,46 @@ def build_ranking(deseq_csv: Path) -> list[tuple[str, float]]:
     return rows
 
 
+def _audit_fig_png(fig, png_path: Path, issues_map: dict | None = None,
+                   name: str | None = None) -> list[tuple[str, str]]:
+    """出图自检（借鉴 scipilot-figure-skill）：布局缺字/裁切 + PNG 有效性。
+
+    不抛异常；结果进 issues_map（供 _figure_qa.json 汇总），无 map 时打
+    日志警告——绝不让坏图无声进结果页。
+    """
+    from lib import figure_qa as fqa
+
+    issues: list[tuple[str, str]] = []
+    try:
+        issues = fqa.audit_layout(fig)
+    except Exception:
+        pass
+    try:
+        issues.extend(fqa.audit_png(png_path))
+    except Exception:
+        pass
+    if issues_map is not None and name is not None:
+        issues_map[name] = issues
+    elif issues:
+        logger.warning("图自检发现问题 %s: %s", png_path, issues)
+    return issues
+
+
+def _write_qa_report(produced: dict[str, Path], outdir: Path) -> None:
+    """富集产物 PNG 统一审计 → outdir/_figure_qa.json（结果页可展示）。"""
+    try:
+        from lib import figure_qa as fqa
+
+        qa_map = {}
+        for k, p in produced.items():
+            if str(p).lower().endswith(".png"):
+                qa_map[k] = fqa.audit_png(p)
+        if qa_map:
+            fqa.save_report(qa_map, Path(outdir) / "_figure_qa.json")
+    except Exception:
+        pass
+
+
 def _save_nes_barplot(res2d, png_path: Path, top: int = 10) -> None:
     """top NES 条形图（上调/下调方向各 top），SCI 风格 300dpi。"""
     try:
@@ -541,6 +586,7 @@ def _save_nes_barplot(res2d, png_path: Path, top: int = 10) -> None:
         ax.set_axisbelow(True)
         fig.tight_layout()
         fig.savefig(png_path, dpi=300, bbox_inches="tight")
+        _audit_fig_png(fig, png_path)  # 出图自检（缺字/裁切/PNG 有效性）
         plt.close(fig)
     except Exception:
         return
@@ -681,6 +727,7 @@ def run_gsea(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
         raise RuntimeError(f"所有比较的 GSEA 都没有产出结果（{detail}）。")
 
     produced = _finalize(tmp_outdir, outdir, produced)
+    _write_qa_report(produced, outdir)  # 出图自检报告（结果页可展示）
     cb(1.0, "富集完成")
     return produced, stats, skipped
 

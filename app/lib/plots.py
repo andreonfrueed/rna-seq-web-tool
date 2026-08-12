@@ -19,6 +19,52 @@ from pathlib import Path
 # 与 R 侧一致的低饱和学术配色（DEG 热图/火山图同款）
 _PALETTE = ["#C1666B", "#6B8EAE", "#7FA886", "#C9A227", "#8E7CA8", "#B07D4F"]
 
+# 期刊规范预设（借鉴 scipilot-figure-skill 的"按最终尺寸出图/字号可读"原则）：
+# 默认 SCI 通用——300 dpi、单栏 3.5 in / 双栏 7.2 in、正文最小字号 6 pt。
+# figsize 直接用英寸定最终尺寸，导出后不在 Word/LaTeX 二次缩放。
+_JOURNAL_SPECS: dict[str, dict] = {
+    "sci_general": {
+        "dpi": 300,
+        "single_col_in": 3.5,
+        "double_col_in": 7.2,
+        "min_font_pt": 6,
+    },
+}
+
+
+def get_journal_spec(name: str = "sci_general") -> dict:
+    """取期刊规范预设（缺失时回退 sci_general）。"""
+    return _JOURNAL_SPECS.get(name, _JOURNAL_SPECS["sci_general"])
+
+
+def _finalize_figure(fig, path: Path, issues_map: dict | None, name: str) -> Path:
+    """出图收尾闭环：布局自检 → 保存 PNG → PNG 有效性审计。
+
+    借鉴 scipilot-figure-skill 的视觉自检：程序先抓缺字/裁切/刻度重叠，
+    再验落盘文件有效性；结果记入 issues_map（None 则丢弃），供结果页
+    汇总成 _figure_qa.json。任何检查失败都不影响出图本身（先出图，
+    问题记录在案，绝不让坏图无声进结果页）。
+    """
+    from lib import figure_qa as fqa
+
+    spec = get_journal_spec()
+    issues = fqa.audit_layout(fig)
+    try:
+        fig.savefig(path, dpi=spec["dpi"], bbox_inches="tight")
+    except Exception as e:
+        issues.append(("FAIL", f"保存 PNG 失败: {e}"))
+        if issues_map is not None:
+            issues_map[name] = issues
+        return path
+    try:
+        fig.close()
+    except Exception:
+        pass
+    issues.extend(fqa.audit_png(path))
+    if issues_map is not None:
+        issues_map[name] = issues
+    return path
+
 # 输出位置（相对 outdir = run_dir/output）
 _TSNE_REL = "5.Visualization/Sample_Plots/All_Samples_tSNE_vst.png"
 _VENN_REL = "5.Visualization/Venn/deg_venn.png"
@@ -156,7 +202,8 @@ def _try_matplotlib():
     return plt
 
 
-def render_tsne(outdir: Path, vst_csv: Path, sample_sheet: Path) -> Path | None:
+def render_tsne(outdir: Path, vst_csv: Path, sample_sheet: Path,
+                qa_map: dict | None = None) -> Path | None:
     """VST 版 t-SNE（300dpi，按分组着色）；sklearn 缺失时返回 None。"""
     samples, genes = read_vst_matrix(vst_csv)
     if len(samples) < 4 or len(genes) < 50:
@@ -201,12 +248,11 @@ def render_tsne(outdir: Path, vst_csv: Path, sample_sheet: Path) -> Path | None:
 
     p = outdir / _TSNE_REL
     p.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(p, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    return p
+    return _finalize_figure(fig, p, qa_map, "t-SNE")
 
 
-def render_venn(outdir: Path, sets: dict[str, set[str]]) -> Path | None:
+def render_venn(outdir: Path, sets: dict[str, set[str]],
+                qa_map: dict | None = None) -> Path | None:
     """≤3 个比较的显著基因 Venn（手绘，300dpi）。"""
     n = len(sets)
     if n < 2 or n > 3:
@@ -251,12 +297,11 @@ def render_venn(outdir: Path, sets: dict[str, set[str]]) -> Path | None:
 
     p = outdir / _VENN_REL
     p.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(p, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    return p
+    return _finalize_figure(fig, p, qa_map, "Venn")
 
 
-def render_upset(outdir: Path, sets: dict[str, set[str]], top_n: int = 15) -> Path | None:
+def render_upset(outdir: Path, sets: dict[str, set[str]], top_n: int = 15,
+                 qa_map: dict | None = None) -> Path | None:
     """UpSet 图：顶部交集大小柱状 + 底部集合成员矩阵（手绘，300dpi）。"""
     if len(sets) < 2:
         return None
@@ -313,9 +358,7 @@ def render_upset(outdir: Path, sets: dict[str, set[str]], top_n: int = 15) -> Pa
 
     p = outdir / _UPSET_REL
     p.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(p, dpi=300, bbox_inches="tight")
-    plt.close(fig)
-    return p
+    return _finalize_figure(fig, p, qa_map, "UpSet")
 
 
 def ensure_aux_plots(run_dir: Path, progress_cb=None) -> dict[str, Path]:
@@ -323,10 +366,12 @@ def ensure_aux_plots(run_dir: Path, progress_cb=None) -> dict[str, Path]:
 
     数据源：run_dir/output 的 VST 表 + DESeq2 差异表 + run_dir/samples.tsv。
     任何一步失败只跳过对应图，不影响结果页。
+    出图同时做自检闭环，结果写 outdir/_figure_qa.json（结果页可展示）。
     """
     run_dir = Path(run_dir)
     outdir = run_dir / "output"
     made: dict[str, Path] = {}
+    qa_map: dict[str, list[tuple[str, str]]] = {}
 
     def cb(p, msg):
         if progress_cb:
@@ -336,7 +381,7 @@ def ensure_aux_plots(run_dir: Path, progress_cb=None) -> dict[str, Path]:
     if vst_csv.exists() and not (outdir / _TSNE_REL).exists():
         cb(0.1, "绘制 t-SNE（VST 数据）…")
         try:
-            p = render_tsne(outdir, vst_csv, run_dir / "samples.tsv")
+            p = render_tsne(outdir, vst_csv, run_dir / "samples.tsv", qa_map)
             if p:
                 made["t-SNE"] = p
         except Exception:
@@ -351,7 +396,7 @@ def ensure_aux_plots(run_dir: Path, progress_cb=None) -> dict[str, Path]:
         if not (outdir / _VENN_REL).exists():
             cb(0.55, "绘制差异基因 Venn…")
             try:
-                p = render_venn(outdir, sets)
+                p = render_venn(outdir, sets, qa_map)
                 if p:
                     made["Venn"] = p
             except Exception:
@@ -359,11 +404,18 @@ def ensure_aux_plots(run_dir: Path, progress_cb=None) -> dict[str, Path]:
         if not (outdir / _UPSET_REL).exists():
             cb(0.75, "绘制差异基因 UpSet…")
             try:
-                p = render_upset(outdir, sets)
+                p = render_upset(outdir, sets, qa_map=qa_map)
                 if p:
                     made["UpSet"] = p
             except Exception:
                 pass
+
+    if qa_map:
+        try:
+            from lib import figure_qa as fqa
+            fqa.save_report(qa_map, outdir / "_figure_qa.json")
+        except Exception:
+            pass
 
     cb(1.0, "补充图就绪")
     return made

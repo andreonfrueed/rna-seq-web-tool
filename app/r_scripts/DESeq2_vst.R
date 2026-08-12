@@ -169,19 +169,24 @@ render_deg_heatmap <- function(vst_mat, outdir, top, symbol_map) {
     heat_dir <- file.path(outdir, "5.Visualization", "Heatmaps")
     dir.create(heat_dir, recursive = TRUE, showWarnings = FALSE)
     deg_png <- file.path(heat_dir, "DEG_heatmap_vst.png")
-    grDevices::png(deg_png, width = 10, height = 8, units = "in", res = 300)
+    deg_pdf <- file.path(heat_dir, "DEG_heatmap_vst.pdf")
     heat_mat <- vst_mat[matched_genes, , drop = FALSE]
     rownames(heat_mat) <- symbols_for(rownames(heat_mat), symbol_map)
-    pheatmap::pheatmap(
-      heat_mat,
-      scale = "row",
-      main = NA,
-      color = grDevices::colorRampPalette(
-        c("#5B83B0", "#F7F7F7", "#C1666B"))(100),
-      border_color = NA,
-      fontsize = 10
-    )
-    grDevices::dev.off()
+    draw_deg_heat <- function(filename) {
+      pheatmap::pheatmap(
+        heat_mat,
+        scale = "row",
+        main = NA,
+        color = grDevices::colorRampPalette(
+          c("#5B83B0", "#F7F7F7", "#C1666B"))(100),
+        border_color = NA,
+        fontsize = 10,
+        filename = filename,
+        width = 10, height = 8, res = 300
+      )
+    }
+    draw_deg_heat(deg_png)  # 网页预览
+    draw_deg_heat(deg_pdf)  # 期刊矢量投稿
   }, error = function(e) {
     warning(paste0("DEG 热图生成失败，已跳过: ", conditionMessage(e)), call. = FALSE)
   })
@@ -217,6 +222,21 @@ run_deseq_results <- function(dds, condition_levels, symbol_map, outdir) {
   }
 }
 
+# ============================================================
+# 出图双格式 helper：PNG(300dpi 网页预览) + PDF(矢量投稿)。
+# 期刊投稿要求矢量图（PDF/SVG，缩放不糊、文字可选）；
+# 同一绘图代码画两遍，分别落到两种设备。
+# ============================================================
+save_figure <- function(png_path, pdf_path, width, height, res = 300, plot_fn) {
+  grDevices::png(png_path, width = width, height = height, units = "in", res = res)
+  plot_fn()
+  grDevices::dev.off()
+  grDevices::pdf(pdf_path, width = width, height = height)
+  plot_fn()
+  grDevices::dev.off()
+  invisible(NULL)
+}
+
 render_pca <- function(vst_mat, col_data, outdir) {
   pca_dir <- file.path(outdir, "5.Visualization", "Sample_Plots")
   dir.create(pca_dir, recursive = TRUE, showWarnings = FALSE)
@@ -230,16 +250,17 @@ render_pca <- function(vst_mat, col_data, outdir) {
   palette <- c("#C1666B", "#6B8EAE", "#7FA886", "#C9A227", "#8E7CA8", "#B07D4F")
   colors <- palette[as.integer(factor(conds, levels = unique(conds)))]
   pca_png <- file.path(pca_dir, "All_Samples_PCA_vst.png")
-  grDevices::png(pca_png, width = 7, height = 5.5, units = "in", res = 300)
-  graphics::par(mar = c(4.5, 4.5, 1.5, 4))
-  graphics::plot(pca$x[, 1L], pca$x[, 2L], col = colors, pch = 16, cex = 1.4,
-                 xlab = paste0("PC1 (", percent[[1L]], "%)"),
-                 ylab = paste0("PC2 (", percent[[2L]], "%)"),
-                 cex.lab = 1.3, cex.axis = 1.1)
-  graphics::legend("right", legend = unique(conds),
-                   col = palette[seq_len(length(unique(conds)))],
-                   pch = 16, bty = "n", inset = -0.12, xpd = NA)
-  grDevices::dev.off()
+  pca_pdf <- file.path(pca_dir, "All_Samples_PCA_vst.pdf")
+  save_figure(pca_png, pca_pdf, 7, 5.5, 300, function() {
+    graphics::par(mar = c(4.5, 4.5, 1.5, 4))
+    graphics::plot(pca$x[, 1L], pca$x[, 2L], col = colors, pch = 16, cex = 1.4,
+                   xlab = paste0("PC1 (", percent[[1L]], "%)"),
+                   ylab = paste0("PC2 (", percent[[2L]], "%)"),
+                   cex.lab = 1.3, cex.axis = 1.1)
+    graphics::legend("right", legend = unique(conds),
+                     col = palette[seq_len(length(unique(conds)))],
+                     pch = 16, bty = "n", inset = -0.12, xpd = NA)
+  })
 }
 
 render_volcanoes <- function(outdir, gene_labels) {
@@ -282,6 +303,8 @@ render_volcanoes <- function(outdir, gene_labels) {
       dir.create(volcano_dir, recursive = TRUE, showWarnings = FALSE)
       volcano_png <- file.path(volcano_dir,
                                paste0(c1, "_vs_", c2, "_volcano.png"))
+      volcano_pdf <- file.path(volcano_dir,
+                               paste0(c1, "_vs_", c2, "_volcano.pdf"))
       label_df <- NULL
       if (isTRUE(gene_labels) && "Symbol" %in% names(plot_df) && any(sig)) {
         score <- neg_log_padj + abs(lfc)
@@ -316,46 +339,46 @@ render_volcanoes <- function(outdir, gene_labels) {
                                  stringsAsFactors = FALSE)
         }
       }
-      grDevices::png(volcano_png, width = 8, height = 6.5, units = "in", res = 300)
-      graphics::par(mar = c(7.2, 5.0, 1.2, 1.2))
-      xlim <- range(lfc)
-      ylim <- range(neg_log_padj)
-      if (!is.null(label_df) && nrow(label_df) > 0L) {
-        xlim <- range(c(xlim, label_df$tx))
-        ylim <- range(c(ylim, label_df$ty))
-        xlim <- xlim + c(-1, 1) * (0.15 * diff(xlim) + 0.5)
-        ylim <- ylim + c(-1, 1) * (0.10 * diff(ylim))
-      }
-      graphics::plot(lfc, neg_log_padj, col = status_col, pch = 16, cex = 0.8,
-                     xlab = "log2 Fold Change",
-                     ylab = "-log10(adjusted p-value)",
-                     cex.lab = 1.3, cex.axis = 1.1,
-                     xlim = xlim, ylim = ylim)
-      graphics::abline(v = c(-1, 1), col = "gray60", lty = 2)
-      graphics::abline(h = -log10(0.05), col = "gray60", lty = 2)
-      graphics::legend("bottom", inset = c(0, -0.22), xpd = NA, horiz = TRUE,
-                       legend = c(sprintf("Up (%d)", sum(up)),
-                                  sprintf("Down (%d)", sum(down)),
-                                  sprintf("Not significant (%d)", sum(!sig))),
-                       col = c("#C1666B", "#6B8EAE", "#C8C8C8"),
-                       pch = 16, bty = "n")
-      if (!is.null(label_df) && nrow(label_df) > 0L) {
-        graphics::segments(label_df$px, label_df$py,
-                           label_df$tx, label_df$ty,
-                           col = "gray45", lwd = 0.7)
-        left_idx <- label_df$side == "down"
-        if (any(left_idx)) {
-          graphics::text(label_df$tx[left_idx], label_df$ty[left_idx],
-                         labels = label_df$sym[left_idx],
-                         cex = 0.55, col = "gray20", adj = c(1, 0.5))
+      save_figure(volcano_png, volcano_pdf, 8, 6.5, 300, function() {
+        graphics::par(mar = c(7.2, 5.0, 1.2, 1.2))
+        xlim <- range(lfc)
+        ylim <- range(neg_log_padj)
+        if (!is.null(label_df) && nrow(label_df) > 0L) {
+          xlim <- range(c(xlim, label_df$tx))
+          ylim <- range(c(ylim, label_df$ty))
+          xlim <- xlim + c(-1, 1) * (0.15 * diff(xlim) + 0.5)
+          ylim <- ylim + c(-1, 1) * (0.10 * diff(ylim))
         }
-        if (any(!left_idx)) {
-          graphics::text(label_df$tx[!left_idx], label_df$ty[!left_idx],
-                         labels = label_df$sym[!left_idx],
-                         cex = 0.55, col = "gray20", adj = c(0, 0.5))
+        graphics::plot(lfc, neg_log_padj, col = status_col, pch = 16, cex = 0.8,
+                       xlab = "log2 Fold Change",
+                       ylab = "-log10(adjusted p-value)",
+                       cex.lab = 1.3, cex.axis = 1.1,
+                       xlim = xlim, ylim = ylim)
+        graphics::abline(v = c(-1, 1), col = "gray60", lty = 2)
+        graphics::abline(h = -log10(0.05), col = "gray60", lty = 2)
+        graphics::legend("bottom", inset = c(0, -0.22), xpd = NA, horiz = TRUE,
+                         legend = c(sprintf("Up (%d)", sum(up)),
+                                    sprintf("Down (%d)", sum(down)),
+                                    sprintf("Not significant (%d)", sum(!sig))),
+                         col = c("#C1666B", "#6B8EAE", "#C8C8C8"),
+                         pch = 16, bty = "n")
+        if (!is.null(label_df) && nrow(label_df) > 0L) {
+          graphics::segments(label_df$px, label_df$py,
+                             label_df$tx, label_df$ty,
+                             col = "gray45", lwd = 0.7)
+          left_idx <- label_df$side == "down"
+          if (any(left_idx)) {
+            graphics::text(label_df$tx[left_idx], label_df$ty[left_idx],
+                           labels = label_df$sym[left_idx],
+                           cex = 0.55, col = "gray20", adj = c(1, 0.5))
+          }
+          if (any(!left_idx)) {
+            graphics::text(label_df$tx[!left_idx], label_df$ty[!left_idx],
+                           labels = label_df$sym[!left_idx],
+                           cex = 0.55, col = "gray20", adj = c(0, 0.5))
+          }
         }
-      }
-      grDevices::dev.off()
+      })
     }, error = function(e) {
       if (grDevices::dev.cur() > 1L) {
         grDevices::dev.off()
@@ -401,26 +424,27 @@ render_ma_plots <- function(outdir) {
       ma_dir <- file.path(outdir, "5.Visualization", "MA_plots")
       dir.create(ma_dir, recursive = TRUE, showWarnings = FALSE)
       ma_png <- file.path(ma_dir, paste0(c1, "_vs_", c2, "_MA.png"))
-      grDevices::png(ma_png, width = 8, height = 6.5, units = "in", res = 300)
-      graphics::par(mar = c(5.0, 5.0, 1.2, 1.2))
-      x <- log2(plot_df$baseMean)
-      y <- plot_df$log2FoldChange
-      graphics::plot(x, y, col = col, pch = 16, cex = 0.6,
-                     xlab = "log2(mean expression)", ylab = "log2 Fold Change",
-                     cex.lab = 1.3, cex.axis = 1.1)
-      graphics::abline(h = 0, col = "gray50", lty = 2)
-      ok <- is.finite(x) & is.finite(y)
-      if (sum(ok) > 20) {
-        smooth <- stats::lowess(x[ok], y[ok], f = 0.3)
-        graphics::lines(smooth, col = "#2F618C", lwd = 1.6)
-      }
-      graphics::legend("topright", inset = 0.02,
-                       legend = c(sprintf("Up (%d)", sum(sig & plot_df$log2FoldChange > 0)),
-                                  sprintf("Down (%d)", sum(sig & plot_df$log2FoldChange < 0)),
-                                  "Not significant"),
-                       col = c("#C1666B", "#6B8EAE", "#C8C8C8"),
-                       pch = 16, bty = "n", cex = 0.9)
-      grDevices::dev.off()
+      ma_pdf <- file.path(ma_dir, paste0(c1, "_vs_", c2, "_MA.pdf"))
+      save_figure(ma_png, ma_pdf, 8, 6.5, 300, function() {
+        graphics::par(mar = c(5.0, 5.0, 1.2, 1.2))
+        x <- log2(plot_df$baseMean)
+        y <- plot_df$log2FoldChange
+        graphics::plot(x, y, col = col, pch = 16, cex = 0.6,
+                       xlab = "log2(mean expression)", ylab = "log2 Fold Change",
+                       cex.lab = 1.3, cex.axis = 1.1)
+        graphics::abline(h = 0, col = "gray50", lty = 2)
+        ok <- is.finite(x) & is.finite(y)
+        if (sum(ok) > 20) {
+          smooth <- stats::lowess(x[ok], y[ok], f = 0.3)
+          graphics::lines(smooth, col = "#2F618C", lwd = 1.6)
+        }
+        graphics::legend("topright", inset = 0.02,
+                         legend = c(sprintf("Up (%d)", sum(sig & plot_df$log2FoldChange > 0)),
+                                    sprintf("Down (%d)", sum(sig & plot_df$log2FoldChange < 0)),
+                                    "Not significant"),
+                         col = c("#C1666B", "#6B8EAE", "#C8C8C8"),
+                         pch = 16, bty = "n", cex = 0.9)
+      })
     }, error = function(e) {
       if (grDevices::dev.cur() > 1L) {
         grDevices::dev.off()
@@ -508,21 +532,26 @@ main <- function() {
     cluster_dir <- file.path(args$outdir, "5.Clustering")
     dir.create(cluster_dir, recursive = TRUE, showWarnings = FALSE)
     cluster_png <- file.path(cluster_dir, "sample_clustering_vst_heatmap.png")
-    grDevices::png(cluster_png, width = 10, height = 8, units = "in", res = 300)
+    cluster_pdf <- file.path(cluster_dir, "sample_clustering_vst_heatmap.pdf")
     heat_mat <- vst_mat[top_var_genes, , drop = FALSE]
     rownames(heat_mat) <- symbols_for(rownames(heat_mat), symbol_map)
-    pheatmap::pheatmap(
-      heat_mat,
-      scale = "row",
-      clustering_method = "average",
-      show_rownames = FALSE,
-      main = NA,
-      color = grDevices::colorRampPalette(
-        c("#5B83B0", "#F7F7F7", "#C1666B"))(100),
-      border_color = NA,
-      fontsize = 10
-    )
-    grDevices::dev.off()
+    draw_cluster_heat <- function(filename) {
+      pheatmap::pheatmap(
+        heat_mat,
+        scale = "row",
+        clustering_method = "average",
+        show_rownames = FALSE,
+        main = NA,
+        color = grDevices::colorRampPalette(
+          c("#5B83B0", "#F7F7F7", "#C1666B"))(100),
+        border_color = NA,
+        fontsize = 10,
+        filename = filename,
+        width = 10, height = 8, res = 300
+      )
+    }
+    draw_cluster_heat(cluster_png)  # 网页预览
+    draw_cluster_heat(cluster_pdf)  # 期刊矢量投稿
   } else {
     warning("VST 矩阵基因太少，跳过样本聚类热图", call. = FALSE)
   }
