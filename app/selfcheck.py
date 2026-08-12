@@ -6,7 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-from lib import env_check
+from lib import config, env_check
 
 
 def _check_tools() -> bool:
@@ -21,7 +21,7 @@ def _check_tools() -> bool:
 
 def _check_example() -> bool:
     print("== [2/3] 迷你样例完整性 ==")
-    up = Path.home() / "rna_web_workspace" / "uploads"
+    up = config.workspace_dir() / "uploads"  # 与网页上传目录一致（不硬编码路径）
     expect = {f"{s}_{m}.fq.gz" for s in ("CON_1", "CON_2", "TREAT_1", "TREAT_2")
               for m in ("R1", "R2")}
     files = [up / n for n in sorted(expect) if (up / n).exists()]

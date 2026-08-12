@@ -235,6 +235,7 @@ def ensure_reference(species: str, ref_dir: Path, progress_cb=None) -> dict[str,
     if existing_fa and existing_gtf:
         if not validate_reference(existing_fa, existing_gtf):
             return {"genome": str(existing_fa), "gtf": str(existing_gtf)}
+        # 校验有错误 → 旧文件已损坏，清理后重新下载
         cb(0.01, "发现损坏的旧参考文件，已清理")
         existing_fa.unlink(missing_ok=True)
         existing_gtf.unlink(missing_ok=True)

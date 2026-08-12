@@ -9,6 +9,7 @@ import zipfile
 from pathlib import Path
 
 _EXCLUDE_DIR_PARTS = {
+    "1.Quality_and_trimming",  # 质控/修剪中间产物，不放进结果
     "bam_preparation", "hisat2_results", "hisat2_index",
     "star_index", "star_results", "_STARtmp", "logs",
 }
@@ -36,8 +37,6 @@ def _is_result_file(f: Path) -> bool:
     for part in f.parts:
         if part in _EXCLUDE_DIR_PARTS:
             return False
-    if "1.Quality_and_trimming" in f.parts:
-        return False  # 质控/修剪中间产物，不放进结果
     if f.name.lower().endswith(tuple(_EXCLUDE_SUFFIX)):
         return False
     return True

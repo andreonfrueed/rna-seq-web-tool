@@ -37,6 +37,24 @@ def test_env_with_bindir_prepends_and_does_not_touch_global(monkeypatch):
     assert os.environ.get("PATH", "") == original_path
 
 
+# ---------------------------------------------------------------- _diffexp_tool_from_ini
+def test_diffexp_tool_from_ini(tmp_path: Path):
+    ini = tmp_path / "run.ini"
+    ini.write_text("[DifferentialExpression]\ndiffexp_tool = deseq2\n",
+                   encoding="utf-8")
+    assert runner._diffexp_tool_from_ini(ini) == "deseq2"
+    ini.write_text("[DifferentialExpression]\ndiffexp_tool = pydiffexpress\n",
+                   encoding="utf-8")
+    assert runner._diffexp_tool_from_ini(ini) == "pydiffexpress"
+
+
+def test_diffexp_tool_from_ini_missing_or_invalid(tmp_path: Path):
+    assert runner._diffexp_tool_from_ini(tmp_path / "nope.ini") == ""
+    bad = tmp_path / "bad.ini"
+    bad.write_text("diffexp_tool = deseq2\n", encoding="utf-8")  # 无段名
+    assert runner._diffexp_tool_from_ini(bad) == ""
+
+
 # ---------------------------------------------------------------- _read_log_lines
 def test_read_log_lines_missing_file(tmp_path: Path):
     assert runner._read_log_lines(tmp_path / "nope.log") == []

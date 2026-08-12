@@ -127,3 +127,15 @@ def test_require_gp_without_gseapy(monkeypatch):
     monkeypatch.setattr(ep, "gp", None)
     with pytest.raises(RuntimeError, match="gseapy"):
         ep._require_gp()
+
+
+# ---------------------------------------------------------------- 原子提交路径改写
+def test_rewrite_produced_paths(tmp_path: Path):
+    tmp = tmp_path / "enrich_py.partial"
+    final = tmp_path / "enrich_py"
+    (tmp / "LPS-C" / "up").mkdir(parents=True)
+    p = tmp / "LPS-C" / "up" / "GO_result.csv"
+    p.write_text("x")
+    produced = {"LPS-C/GO_result.csv": p}
+    out = ep._rewrite_produced_paths(produced, tmp, final)
+    assert out["LPS-C/GO_result.csv"] == final / "LPS-C" / "up" / "GO_result.csv"

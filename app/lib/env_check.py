@@ -36,17 +36,18 @@ TOOLS = [
 
 def check_tool(tool: dict) -> dict:
     name = tool["name"]
+    env = env_with_bindir()  # PATH 前插 bin 目录，但不碰全局环境（构建一次复用）
     # which 也走扩展后的 PATH，否则解释器 bin 目录里的工具查不到
-    if shutil.which(tool["bin"], path=env_with_bindir()["PATH"]) is None:
+    if shutil.which(tool["bin"], path=env["PATH"]) is None:
         return {"name": name, "ok": False, "version": "", "hint": tool["hint"]}
     # 普通工具仍是字符串命令；R/DESeq2 用 list 保留带引号的 R 表达式
     cmd = tool["cmd"]
     cmd_args = cmd if isinstance(cmd, list) else cmd.split()
     try:
         out = subprocess.run(
-    cmd_args, capture_output=True, text=True,
-    timeout=tool.get("timeout", 15),
-            env=env_with_bindir(),  # PATH 前插 bin 目录，但不碰全局环境
+            cmd_args, capture_output=True, text=True,
+            timeout=tool.get("timeout", 15),
+            env=env,
         )
         version = (out.stdout or out.stderr).strip().splitlines()
         if out.returncode != 0:

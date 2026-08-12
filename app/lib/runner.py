@@ -1,5 +1,6 @@
 """后台运行 pyseqrna + 日志进度解析。"""
 from __future__ import annotations
+import configparser
 import os
 import json
 import re
@@ -76,17 +77,13 @@ def pyseqrna_executable() -> str:
 
 
 def _diffexp_tool_from_ini(ini_path: Path) -> str:
-    """逐行读 run.ini 的 diffexp_tool（config_builder 生成，无注释）。"""
+    """从 run.ini 读差异分析引擎（configparser，与 app.py 的 _read_run_ini 一致）。"""
+    cp = configparser.ConfigParser()
     try:
-        for line in Path(ini_path).read_text(encoding="utf-8").splitlines():
-            if "=" not in line:
-                continue
-            key, value = line.split("=", 1)
-            if key.strip() == "diffexp_tool":
-                return value.strip()
-    except OSError:
-        pass
-    return ""
+        cp.read(ini_path, encoding="utf-8")
+    except (OSError, configparser.Error):
+        return ""
+    return cp.get("DifferentialExpression", "diffexp_tool", fallback="")
 
 
 def start_run(ini_path: Path, cwd: Path, log_path: Path,

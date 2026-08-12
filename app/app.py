@@ -6,12 +6,14 @@
 from __future__ import annotations
 import configparser
 import hashlib
+import io
 import itertools
 import json
 import os
 import re
 import shutil
 import time
+import zipfile
 from pathlib import Path
 
 import streamlit as st
@@ -21,8 +23,8 @@ try:
 except Exception:  # 没装自动刷新包时退回手动刷新
     st_autorefresh = None
 
-from lib import config, config_builder, enrich_py, env_check, preflight, reference, runner, sample_sheet
-from lib import results as res_mod
+from lib import (config, config_builder, enrich_py, env_check, preflight,
+                 reference, results, runner, sample_sheet)
 
 VERSION = "2.1"
 
@@ -484,8 +486,7 @@ def tab_upload() -> None:
             _show_classification(files, paired)
 
         # ---- 文件管理：旧文件可以在这里删掉，避免混进新分析 ----
-        all_files = sorted(p.name for p in UPLOAD_DIR.iterdir() if p.is_file()) \
-            if UPLOAD_DIR.exists() else []
+        all_files = sorted(p.name for p in UPLOAD_DIR.iterdir() if p.is_file())
         if all_files:
             with st.expander(f"🗂️ 管理上传文件夹（共 {len(all_files)} 个文件，可删除旧文件）"):
                 doomed = st.multiselect("选择要删除的文件", all_files, key="del_files")
@@ -607,9 +608,9 @@ def tab_groups() -> None:
                            float(cfg["pvalue_threshold"]), 0.01,
                            help="越小越严格，默认 0.05；"
                                 "DESeq2 引擎下对应 padj 阈值")
-    threads = c3.number_input("线程数", 1, 32, config.load_config()["threads"],
+    threads = c3.number_input("线程数", 1, 32, cfg["threads"],
                               help="电脑 CPU 核心越多可以开越大，跑得快些")
-    memory = c4.number_input("内存 (GB)", 4, 128, config.load_config()["memory"],
+    memory = c4.number_input("内存 (GB)", 4, 128, cfg["memory"],
                              help="别超过电脑实际内存，留 2-4GB 给系统")
     st.session_state["fold"] = fold
     st.session_state["pval"] = pval
@@ -864,7 +865,7 @@ def _show_run_progress(run_dir: Path, proc, run_name: str, pid: int | None = Non
             st.session_state["done_run"] = run_name
         else:
             outdir = RUNS_DIR / run_name / "output"
-            if res_mod.find_outputs(outdir):
+            if results.find_outputs(outdir):
                 note = progress.get("partial_note") or "常见原因是 GO/KEGG 富集需要联网"
                 st.warning(
                     f"分析主体已完成，但**部分阶段失败**（{note}）。"
@@ -881,8 +882,6 @@ def _show_run_progress(run_dir: Path, proc, run_name: str, pid: int | None = Non
             st.download_button("📄 下载运行日志", data=log_path.read_bytes(),
                                file_name=f"{run_name}.log", key=f"log_{run_name}")
             # 诊断包：日志 + 配置 + 样本表 + checkpoint，报错排查一次拿全
-            import io
-            import zipfile
             buf = io.BytesIO()
             with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
                 zf.write(log_path, "pyseqrna.log")
@@ -986,7 +985,7 @@ def _zip_download_section(zp: Path, sig: str, key: str, label: str, file_name: s
 def _enrich_zip_button(enrich_out: Path, key_prefix: str) -> None:
     """一键打包下载全部富集结果（ZIP 内按 比较×上调/下调 分好文件夹）。"""
     try:
-        zp, sig = res_mod.zip_folder(enrich_out, enrich_out.parent / "enrich_results.zip",
+        zp, sig = results.zip_folder(enrich_out, enrich_out.parent / "enrich_results.zip",
                                      prefix="GO_KEGG_富集")
     except Exception as e:
         st.warning(f"富集打包失败：{e}")
@@ -1094,7 +1093,6 @@ def _do_enrich(run_dir: Path, gtf: Path, species: str) -> None:
     if species == "mmusculus":
         st.caption("小鼠的 GO 富集用人版基因库做直系同源匹配，解读时注意。")
     for key in sorted(produced):
-        fn = key.split("/")[-1]
         st.download_button(f"下载 {key}", data=produced[key].read_bytes(),
                            file_name=key.replace("/", "_").replace(" · ", "_"),
                            key=f"rich_now_{key}_{run_dir.name}")
@@ -1122,7 +1120,7 @@ def tab_results() -> None:
     if active and active[0] == run_name:
         st.info("这次分析还在运行中，目前只能看到部分结果。")
 
-    groups = res_mod.find_outputs(outdir)
+    groups = results.find_outputs(outdir)
     if not groups:
         st.warning("该次分析输出目录为空或尚未完成。")
         return
@@ -1135,7 +1133,7 @@ def tab_results() -> None:
     extra = [(enrich_out, "GO_KEGG_富集")] if enrich_out.exists() else []
     zip_path = run_dir / "results.zip"
     try:
-        zp, sig = res_mod.make_zip(outdir, zip_path, extra_dirs=extra)
+        zp, sig = results.make_zip(outdir, zip_path, extra_dirs=extra)
         _zip_download_section(
             zp, sig, f"zipb_{run_name}",
             "📦 打包下载全部结果 (ZIP，含 GO/KEGG 富集)",
@@ -1189,7 +1187,7 @@ def tab_results() -> None:
                    "结果表格和图片都会保留，放心删。")
         running_this = bool(active and active[0] == run_name)
         if st.button("🗑️ 删除中间大文件", key=f"clean_{run_name}", disabled=running_this):
-            freed = res_mod.cleanup_intermediates(outdir)
+            freed = results.cleanup_intermediates(outdir)
             st.success(f"已释放 {freed / 1e9:.1f} GB 磁盘空间。")
         if running_this:
             st.caption("分析运行中，结束后才能操作")

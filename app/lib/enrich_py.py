@@ -308,8 +308,7 @@ def _enrich_one(symbols: list[str], go_sets: dict[str, list[str]],
             skipped.append(f"{label} 的 KEGG 富集出错：{str(e)[:60]}")
 
 
-def _rewrite_produced_paths(produced: dict[str, Path], tmp_root: Path, final_root: Path,
-                            outdir: Path) -> dict[str, Path]:
+def _rewrite_produced_paths(produced: dict[str, Path], tmp_root: Path, final_root: Path) -> dict[str, Path]:
     """原子提交后把 produced 里的路径从 .partial 临时目录改指正式目录。"""
     out: dict[str, Path] = {}
     for key, p in produced.items():
@@ -409,6 +408,6 @@ def run_enrichment(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
     if outdir.exists():
         shutil.rmtree(outdir)
     tmp_outdir.rename(outdir)
-    produced = _rewrite_produced_paths(produced, tmp_outdir, outdir, outdir)
+    produced = _rewrite_produced_paths(produced, tmp_outdir, outdir)
     cb(1.0, "富集完成")
     return produced, stats, skipped

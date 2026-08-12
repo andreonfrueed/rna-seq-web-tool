@@ -69,6 +69,18 @@ def test_find_outputs_excludes_intermediates(tmp_path: Path):
     assert "genome.fa" not in all_files    # 参考后缀排除
 
 
+def test_find_outputs_excludes_quality_trimming(tmp_path: Path):
+    """RED-05 回归：1.Quality_and_trimming 与其他中间目录统一排除。"""
+    out = _make_output(tmp_path)
+    q = out / "1.Quality_and_trimming"
+    q.mkdir()
+    (q / "trimmed.fastq.gz").write_bytes(b"x")
+    (q / "fastqc_report.html").write_text("<html></html>")
+    all_files = [p.name for v in results.find_outputs(out).values() for p in v]
+    assert "trimmed.fastq.gz" not in all_files
+    assert "fastqc_report.html" not in all_files
+
+
 def test_make_zip_and_signature_cache(tmp_path: Path):
     out = _make_output(tmp_path)
     zp = tmp_path / "r.zip"
