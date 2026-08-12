@@ -282,12 +282,55 @@ render_volcanoes <- function(outdir, gene_labels) {
       dir.create(volcano_dir, recursive = TRUE, showWarnings = FALSE)
       volcano_png <- file.path(volcano_dir,
                                paste0(c1, "_vs_", c2, "_volcano.png"))
+      label_df <- NULL
+      if (isTRUE(gene_labels) && "Symbol" %in% names(plot_df) && any(sig)) {
+        score <- neg_log_padj + abs(lfc)
+        top_idx <- order(score, decreasing = TRUE)
+        top_idx <- top_idx[sig[top_idx]]
+        top_idx <- top_idx[seq_len(min(10L, length(top_idx)))]
+        if (length(top_idx) > 0L) {
+          yspan <- diff(range(neg_log_padj))
+          gap <- max(0.07 * yspan, 0.6)
+          px <- py <- tx <- ty <- sym <- side <- character(0)
+          for (side_name in c("up", "down")) {
+            idx <- if (side_name == "up") {
+              top_idx[lfc[top_idx] > 0]
+            } else {
+              top_idx[lfc[top_idx] < 0]
+            }
+            if (length(idx) == 0L) next
+            idx <- idx[order(neg_log_padj[idx], decreasing = TRUE)]
+            anchor_y <- max(neg_log_padj[idx]) + 0.06 * yspan
+            pos_y <- anchor_y - (seq_along(idx) - 1L) * gap
+            pos_x <- if (side_name == "up") max(lfc) + 0.9 else min(lfc) - 0.9
+            px <- c(px, lfc[idx])
+            py <- c(py, neg_log_padj[idx])
+            tx <- c(tx, rep(pos_x, length(idx)))
+            ty <- c(ty, pos_y)
+            sym <- c(sym, as.character(plot_df$Symbol[idx]))
+            side <- c(side, rep(side_name, length(idx)))
+          }
+          label_df <- data.frame(px = as.numeric(px), py = as.numeric(py),
+                                 tx = as.numeric(tx), ty = as.numeric(ty),
+                                 sym = sym, side = side,
+                                 stringsAsFactors = FALSE)
+        }
+      }
       grDevices::png(volcano_png, width = 8, height = 6.5, units = "in", res = 300)
       graphics::par(mar = c(7.2, 5.0, 1.2, 1.2))
+      xlim <- range(lfc)
+      ylim <- range(neg_log_padj)
+      if (!is.null(label_df) && nrow(label_df) > 0L) {
+        xlim <- range(c(xlim, label_df$tx))
+        ylim <- range(c(ylim, label_df$ty))
+        xlim <- xlim + c(-1, 1) * (0.15 * diff(xlim) + 0.5)
+        ylim <- ylim + c(-1, 1) * (0.10 * diff(ylim))
+      }
       graphics::plot(lfc, neg_log_padj, col = status_col, pch = 16, cex = 0.8,
                      xlab = "log2 Fold Change",
                      ylab = "-log10(adjusted p-value)",
-                     cex.lab = 1.3, cex.axis = 1.1)
+                     cex.lab = 1.3, cex.axis = 1.1,
+                     xlim = xlim, ylim = ylim)
       graphics::abline(v = c(-1, 1), col = "gray60", lty = 2)
       graphics::abline(h = -log10(0.05), col = "gray60", lty = 2)
       graphics::legend("bottom", inset = c(0, -0.22), xpd = NA, horiz = TRUE,
@@ -296,25 +339,21 @@ render_volcanoes <- function(outdir, gene_labels) {
                                   sprintf("Not significant (%d)", sum(!sig))),
                        col = c("#C1666B", "#6B8EAE", "#C8C8C8"),
                        pch = 16, bty = "n")
-      if (isTRUE(gene_labels) && "Symbol" %in% names(plot_df) && any(sig)) {
-        label_symbols <- as.character(plot_df$Symbol)
-        score <- neg_log_padj + abs(lfc)
-        sig_idx <- which(sig)
-        top_idx <- sig_idx[order(score[sig_idx], decreasing = TRUE)]
-        top_idx <- top_idx[seq_len(min(10L, length(top_idx)))]
-        n_label <- length(top_idx)
-        label_x <- lfc[top_idx]
-        label_y <- neg_log_padj[top_idx]
-        # 确定性错排：按显著性排名错开，避免多个基因挤在同一个点
-        stagger_x <- ifelse(label_x < 0, -1, 1) *
-          (0.35 + 0.35 * ((seq_len(n_label) - 1L) %% 3L))
-        stagger_y <- 0.35 * ((seq_len(n_label) - 1L) %/% 3L)
-        text_x <- label_x + stagger_x
-        text_y <- label_y + stagger_y
-        graphics::segments(label_x, label_y, text_x, text_y,
+      if (!is.null(label_df) && nrow(label_df) > 0L) {
+        graphics::segments(label_df$px, label_df$py,
+                           label_df$tx, label_df$ty,
                            col = "gray45", lwd = 0.7)
-        graphics::text(text_x, text_y, labels = label_symbols[top_idx],
-                       cex = 0.55, col = "gray20")
+        left_idx <- label_df$side == "down"
+        if (any(left_idx)) {
+          graphics::text(label_df$tx[left_idx], label_df$ty[left_idx],
+                         labels = label_df$sym[left_idx],
+                         cex = 0.55, col = "gray20", adj = c(1, 0.5))
+        }
+        if (any(!left_idx)) {
+          graphics::text(label_df$tx[!left_idx], label_df$ty[!left_idx],
+                         labels = label_df$sym[!left_idx],
+                         cex = 0.55, col = "gray20", adj = c(0, 0.5))
+        }
       }
       grDevices::dev.off()
     }, error = function(e) {
