@@ -32,6 +32,7 @@ import json
 import math
 import re
 import shutil
+import time
 from pathlib import Path
 
 # gseapy 只在真正跑富集时才需要（顶层导入会让没装 gseapy 的环境
@@ -328,10 +329,25 @@ def _rewrite_produced_paths(produced: dict[str, Path], tmp_root: Path, final_roo
 
 
 def _finalize(tmp_outdir: Path, outdir: Path, produced: dict[str, Path]) -> dict[str, Path]:
-    """原子提交：删旧目录（若存在）→ rename 临时目录为正式目录，并改写路径。"""
+    """原子提交：删旧目录（若存在）→ 移动临时目录为正式目录，并改写路径。
+
+    WSL 挂载盘（/mnt/?, 9p/drvfs）下，大量文件刚写完立即 rename 目录会
+    偶发 PermissionError（Windows 侧实时扫描/延迟写锁文件）。短重试后仍
+    失败时改用 shutil.move 的逐文件复制 fallback（目录级 rename 被锁时
+    单文件复制通常不受影响）；原生文件系统上首次 rename 即成功、保持原子。
+    """
     if outdir.exists():
         shutil.rmtree(outdir)
-    tmp_outdir.rename(outdir)
+    last_err: OSError | None = None
+    for attempt in range(3):
+        try:
+            shutil.move(str(tmp_outdir), str(outdir))
+            break
+        except OSError as e:  # drvfs 延迟写/扫描锁
+            last_err = e
+            time.sleep(0.5 * (attempt + 1))
+    else:
+        raise last_err  # type: ignore[misc]
     return _rewrite_produced_paths(produced, tmp_outdir, outdir)
 
 
@@ -435,6 +451,24 @@ _GSEA_FDR = 0.25
 _GSEA_MAX_CURVES = 6
 
 
+def _find_fdr_col(res2d) -> str | None:
+    """从 gseapy res2d 里找 FDR 列（列名大小写/空格/标点不敏感）。
+
+    gseapy 不同版本的列名不同（'fdr' vs 'FDR q-val'），只认一种会导致
+    显著通路统计恒为 0、富集曲线图永不生成。
+    """
+    import re as _re
+
+    def _norm(c: str) -> str:
+        return _re.sub(r"[^a-z0-9]", "", c.lower())
+
+    norm = {_norm(str(c)): c for c in res2d.columns}
+    for key in ("fdrqval", "fdr"):
+        if key in norm:
+            return norm[key]
+    return None
+
+
 def collect_deseq_tables(diff_dir: Path) -> dict[str, Path]:
     """收集 DESeq2 差异表：{比较名(c1-c2): 文件路径}。
 
@@ -528,12 +562,18 @@ def _gsea_curve_plots(rnk_df, gene_sets: dict[str, list[str]],
         if not genes:
             continue
         try:
-            gp.prerank(rnk=rnk_df, gene_sets={term: genes}, outdir=str(od),
-                       min_size=3, max_size=5000, permutation_num=1000,
-                       seed=42, no_plot=False, verbose=False)
+            kwargs = dict(rnk=rnk_df, gene_sets={term: genes}, outdir=str(od),
+                          min_size=3, max_size=5000, permutation_num=1000,
+                          seed=42, no_plot=False, verbose=False)
+            try:
+                # gseapy>=1.2 默认 format="pdf"，网页要展示必须显式 PNG
+                gp.prerank(**kwargs, format="png")
+            except TypeError:
+                gp.prerank(**kwargs)  # 老版本无 format 参数
         except Exception:
             continue
-    for p in sorted(od.glob("*.png")):
+    # gseapy 把图输出到 outdir/prerank/ 子目录，必须递归查找
+    for p in sorted(od.rglob("*.png")):
         paths.append(p)
     return paths
 
@@ -614,8 +654,9 @@ def run_gsea(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
             _save_nes_barplot(res2d, bar)
             if bar.exists():
                 produced[f"{safe_cmp}/GSEA_NES_barplot.png"] = bar
-            if "fdr" in res2d.columns:
-                sig_df = res2d[pd.to_numeric(res2d["fdr"], errors="coerce") < _GSEA_FDR]
+            fdr_col = _find_fdr_col(res2d)
+            if fdr_col:
+                sig_df = res2d[pd.to_numeric(res2d[fdr_col], errors="coerce") < _GSEA_FDR]
                 entry["sig_terms"] = int(len(sig_df))
                 if len(sig_df) > 0:
                     entry["top_term"] = str(sig_df.iloc[0]["Term"])[:80]
