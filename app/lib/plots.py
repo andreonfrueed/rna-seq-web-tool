@@ -169,8 +169,13 @@ def render_tsne(outdir: Path, vst_csv: Path, sample_sheet: Path) -> Path | None:
 
     mat = np.array([genes[g] for g in sorted(genes)], dtype=float).T  # 样本×基因
     perplexity = min(30, max(2, len(samples) - 1))
-    tsne = TSNE(n_components=2, perplexity=perplexity, random_state=42,
-                init="pca", learning_rate="auto", n_iter=1000)
+    # sklearn>=1.6 把 n_iter 改名为 max_iter（1.9 已移除旧名），兼容两者
+    tsne_kwargs = dict(n_components=2, perplexity=perplexity, random_state=42,
+                       init="pca", learning_rate="auto")
+    try:
+        tsne = TSNE(**tsne_kwargs, max_iter=1000)
+    except TypeError:
+        tsne = TSNE(**tsne_kwargs, n_iter=1000)  # 老版本 sklearn
     xy = tsne.fit_transform(mat)
 
     conds = read_sample_conditions(sample_sheet)

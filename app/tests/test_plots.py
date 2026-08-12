@@ -84,3 +84,122 @@ def test_upset_combinations_top_n():
     assert len(combos) <= 3
     counts = [n for _, n in combos]
     assert counts == sorted(counts, reverse=True)  # 按大小降序
+
+
+# ---------------------------------------------------------------- render_tsne（sklearn 参数兼容）
+def _make_tsne_inputs(tmp_path: Path) -> tuple[Path, Path]:
+    """6 样本 × 60 基因的 VST 表 + samples.tsv。"""
+    csv = tmp_path / "vst.csv"
+    lines = ["Gene,Symbol,S1,S2,S3,S4,S5,S6"]
+    for i in range(60):
+        lines.append("ENSG%05d,ENSG%05d,%s"
+                     % (i, i, ",".join(str((i + j) % 7 + 1) for j in range(6))))
+    csv.write_text("\n".join(lines), encoding="utf-8")
+    samples = tmp_path / "samples.tsv"
+    rows = ["SampleName\tReplication\tIdentifier\tFile1\tFile2"]
+    for i in range(1, 7):
+        rows.append("S%d\t1\t%s\tf1\tf2" % (i, "CT" if i <= 3 else "LPS"))
+    samples.write_text("\n".join(rows), encoding="utf-8")
+    return csv, samples
+
+
+class _FakeFig:
+    def savefig(self, p, **kw):
+        Path(p).parent.mkdir(parents=True, exist_ok=True)
+        Path(p).write_bytes(b"png")
+
+    def tight_layout(self):
+        pass
+
+
+class _FakeAx:
+    def scatter(self, *a, **k):
+        pass
+
+    def annotate(self, *a, **k):
+        pass
+
+    def set_xlabel(self, *a, **k):
+        pass
+
+    def set_ylabel(self, *a, **k):
+        pass
+
+    def set_title(self, *a, **k):
+        pass
+
+    def legend(self, *a, **k):
+        pass
+
+    def axis(self, *a, **k):
+        pass
+
+    def grid(self, *a, **k):
+        pass
+
+    def set_axisbelow(self, *a, **k):
+        pass
+
+
+def _patch_tsne_env(monkeypatch, tsne_cls):
+    """用假 sklearn.manifold.TSNE + 假 matplotlib 替换真实依赖。"""
+    import sys, types
+    import numpy as np
+
+    fake_manifold = types.ModuleType("sklearn.manifold")
+    fake_manifold.TSNE = tsne_cls
+    fake_sklearn = types.ModuleType("sklearn")
+    fake_sklearn.manifold = fake_manifold
+    monkeypatch.setitem(sys.modules, "sklearn", fake_sklearn)
+    monkeypatch.setitem(sys.modules, "sklearn.manifold", fake_manifold)
+
+    class _FakePlt:
+        def subplots(self, **kw):
+            return _FakeFig(), _FakeAx()
+
+        def close(self, fig):
+            pass
+
+    monkeypatch.setattr(plots, "_try_matplotlib", lambda: _FakePlt())
+    return np
+
+
+def test_render_tsne_new_sklearn_uses_max_iter(monkeypatch, tmp_path: Path):
+    """回归（RED-06）：sklearn>=1.6 用 max_iter（n_iter 已移除），t-SNE 必须成功。"""
+    calls = {"max_iter": 0, "n_iter": 0}
+
+    class NewTSNE:
+        def __init__(self, **kw):
+            calls["max_iter"] += int("max_iter" in kw)
+            calls["n_iter"] += int("n_iter" in kw)
+
+        def fit_transform(self, mat):
+            return np.zeros((mat.shape[0], 2))
+
+    np = _patch_tsne_env(monkeypatch, NewTSNE)
+    csv, samples = _make_tsne_inputs(tmp_path)
+    out = tmp_path / "out"
+    p = plots.render_tsne(out, csv, samples)
+    assert p is not None and p.exists()
+    assert calls["max_iter"] == 1 and calls["n_iter"] == 0
+
+
+def test_render_tsne_old_sklearn_falls_back_to_n_iter(monkeypatch, tmp_path: Path):
+    """回归：老版 sklearn 只有 n_iter（不认 max_iter）时自动降级，t-SNE 仍成功。"""
+    calls = {"n_iter": 0}
+
+    class OldTSNE:
+        def __init__(self, **kw):
+            if "max_iter" in kw:
+                raise TypeError("unexpected keyword 'max_iter'")
+            calls["n_iter"] += 1
+
+        def fit_transform(self, mat):
+            return np.zeros((mat.shape[0], 2))
+
+    np = _patch_tsne_env(monkeypatch, OldTSNE)
+    csv, samples = _make_tsne_inputs(tmp_path)
+    out = tmp_path / "out"
+    p = plots.render_tsne(out, csv, samples)
+    assert p is not None and p.exists()
+    assert calls["n_iter"] == 1
