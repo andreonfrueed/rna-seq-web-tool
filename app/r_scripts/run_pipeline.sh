@@ -50,7 +50,12 @@ DIFFEXP_TOOL="$(ini_value diffexp_tool)"
 # 1. pyseqrna 主流水线，退出码原样保留
 pyseqrna -c "$INI"
 PYR=$?
-if [ "$PYR" -ne 0 ]; then
+# BUG-FIX：pyseqrna 的 GO/KEGG 注释阶段依赖外网（BioMart/pyseqrna API），
+# 网络失败时 pyseqrna 返回非 0，但比对/定量/差异分析可能都已成功。
+# 此时不应阻断本地 R 后处理（DESeq2 表/VST/SCI 图都不需要外网）——
+# 只有连差异基因表都没生成（差异分析真失败）才整体退出。
+if [ "$PYR" -ne 0 ] && [ ! -d "$OUTDIR/4.Differential_Expression/diff_genes" ]; then
+  echo "错误：pyseqrna 未产出差异基因表（退出码 $PYR），无法继续后处理" >&2
   exit "$PYR"
 fi
 

@@ -155,18 +155,43 @@ def test_collect_deseq_tables(tmp_path: Path):
     assert ep.collect_deseq_tables(tmp_path / "nope") == {}
 
 
-def test_build_ranking_signed_pvalue(tmp_path: Path):
-    csv = tmp_path / "DESeq2_LPS_vs_C.csv"
+def test_build_ranking_symbol_column_used(tmp_path: Path):
+    """Symbol 列有效时直接用（GSEA 用全部基因排序，只过滤数值无效项）。"""
+    csv = tmp_path / "DESeq2_C_vs_LPS.csv"
     csv.write_text(
         "Gene,Symbol,baseMean,log2FoldChange,lfcSE,stat,pvalue,padj\n"
-        "ENSG1,TP53,100,2.0,0.1,20,1e-10,1e-9\n"      # 上调显著 → 正分
-        "ENSG2,BRCA1,100,-1.5,0.1,-15,1e-8,1e-7\n"    # 下调显著 → 负分
+        "ENSG1,TNF,100,2.0,0.1,20,1e-10,1e-9\n"       # 上调 → 正分
+        "ENSG2,IL6,100,-1.5,0.1,-15,1e-8,1e-7\n"      # 下调 → 负分
         "ENSG3,no_padj,10,3.0,0.1,30,0.01,\n"          # padj 缺失 → 过滤
         "ENSG4,bad_lfc,10,abc,0.1,1,0.5,0.6\n"         # lfc 非数字 → 过滤
         "ENSG5,padj_zero,10,1.0,0.1,10,0.0,0.0\n",     # padj=0 → 过滤
         encoding="utf-8")
-    rows = ep.build_ranking(csv)
-    assert rows == [("TP53", -math.log10(1e-9)), ("BRCA1", -math.log10(1e-7) * -1)]
+    rows = ep.build_ranking(csv)  # 无 symbol_map 也 OK（Symbol 列有效）
+    assert rows == [("TNF", -math.log10(1e-9)), ("IL6", -math.log10(1e-7) * -1)]
+
+
+def test_build_ranking_degraded_symbol_falls_back_to_map(tmp_path: Path):
+    """Symbol 列退化（=Ensembl ID）时回退 Gene 列 + GTF 映射（昨晚真实 bug 回归）。"""
+    csv = tmp_path / "DESeq2_C_vs_LPS.csv"
+    csv.write_text(
+        "Gene,Symbol,baseMean,log2FoldChange,lfcSE,stat,pvalue,padj\n"
+        "ENSMUSG1,ENSMUSG1,100,2.0,0.1,20,1e-10,1e-9\n"    # Symbol=ID → 用 map
+        "ENSMUSG2,ENSMUSG2,100,-1.5,0.1,-15,1e-8,1e-7\n"   # Symbol=ID → 用 map
+        "ENSMUSG3,ENSMUSG3,10,3.0,0.1,30,0.01,0.02\n",      # 映射不到 → 丢弃
+        encoding="utf-8")
+    symbol_map = {"ENSMUSG1": "Trp53", "ENSMUSG2": "Brca1"}
+    rows = ep.build_ranking(csv, symbol_map)
+    assert rows == [("TRP53", -math.log10(1e-9)), ("BRCA1", -math.log10(1e-7) * -1)]
+
+
+def test_build_ranking_no_map_drops_degraded(tmp_path: Path):
+    """Symbol 退化且无映射 → 全部丢弃（避免 ENSMUSG 匹配不上基因库）。"""
+    csv = tmp_path / "d.csv"
+    csv.write_text(
+        "Gene,Symbol,baseMean,log2FoldChange,lfcSE,stat,pvalue,padj\n"
+        "ENSMUSG1,ENSMUSG1,100,2.0,0.1,20,1e-10,1e-9\n",
+        encoding="utf-8")
+    assert ep.build_ranking(csv) == []
 
 
 def test_run_enrichment_method_dispatch(monkeypatch, tmp_path: Path):

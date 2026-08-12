@@ -490,19 +490,29 @@ def collect_deseq_tables(diff_dir: Path) -> dict[str, Path]:
     return out
 
 
-def build_ranking(deseq_csv: Path) -> list[tuple[str, float]]:
+def build_ranking(deseq_csv: Path, symbol_map: dict[str, str] | None = None) -> list[tuple[str, float]]:
     """从 DESeq2 差异表构建 GSEA 排序列表：[(基因符号大写, 分数)]。
 
+    符号解析两级回退（兼容真实世界两种 csv）：
+    1. Symbol 列是有效基因符号（如 TNF）→ 直接用；
+    2. Symbol 列退化（=Ensembl ID，常见于没传 --symbol-map 的 R 输出）
+       → 用 Gene 列 + symbol_map（GTF 解析）映射为符号。
+    最终仍无符号的基因丢弃——Enrichr 基因集库是符号命名，ID 必不匹配。
     分数 = -log10(padj) × sign(log2FC)，论文标准做法（signed p-value）。
     过滤掉 log2FC/padj 缺失、非有限或 padj=0（-log10 无定义）的基因。
     """
     import csv
 
+    def _looks_like_id(sym: str, gid: str) -> bool:
+        """判断 Symbol 列是否退化成 ID（与 Gene 相同或 Ensembl/数字风格）。"""
+        return (sym == gid or sym.startswith(("ENSG", "ENSMUS", "ENSRNO", "ENSDAR"))
+                or sym.isdigit())
+
     rows: list[tuple[str, float]] = []
     with open(deseq_csv, encoding="utf-8", errors="replace", newline="") as f:
         for r in csv.DictReader(f):
-            sym = (r.get("Symbol") or "").strip()
-            if not sym:
+            gid = (r.get("Gene") or "").strip()
+            if not gid:
                 continue
             try:
                 lfc = float(r["log2FoldChange"])
@@ -511,6 +521,11 @@ def build_ranking(deseq_csv: Path) -> list[tuple[str, float]]:
                 continue
             if not (math.isfinite(lfc) and math.isfinite(padj) and padj > 0):
                 continue
+            sym = (r.get("Symbol") or "").strip()
+            if not sym or _looks_like_id(sym, gid):
+                sym = (symbol_map or {}).get(gid, "")
+            if not sym:
+                continue  # 无有效符号 → 基因集库必不匹配，丢弃
             score = -math.log10(padj) * (1.0 if lfc >= 0 else -1.0)
             rows.append((sym.upper(), score))
     return rows
@@ -644,7 +659,9 @@ def run_gsea(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
             progress_cb(min(max(p, 0.0), 1.0), msg)
 
     diff_dir = run_dir / "output" / "4.Differential_Expression"
-    cb(0.05, "读取 DESeq2 差异表…")
+    cb(0.05, "解析基因注释（GTF）…")
+    symbol_map = parse_gtf_symbols(gtf)
+    cb(0.08, "读取 DESeq2 差异表…")
     tables = collect_deseq_tables(diff_dir)
     if not tables:
         raise ValueError(
@@ -674,7 +691,7 @@ def run_gsea(run_dir: Path, gtf: Path, species: str, cache_dir: Path,
     for i, (cmp_name, csv_path) in enumerate(tasks):
         safe_cmp = _safe_name(cmp_name)
         cb(0.15 + 0.80 * i / max(len(tasks), 1), f"GSEA 分析：{safe_cmp}（{i + 1}/{len(tasks)}）")
-        ranking = build_ranking(csv_path)
+        ranking = build_ranking(csv_path, symbol_map)
         symbols = {sym for sym, _ in ranking}
         entry = {"genes": len(ranking), "matched": len(symbols & universe),
                  "sig_terms": 0, "top_term": ""}

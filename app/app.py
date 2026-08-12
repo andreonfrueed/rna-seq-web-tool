@@ -1055,7 +1055,9 @@ def _render_gsea_files(enrich_out: Path, files: list[Path],
             st.download_button("⬇️ 下载条形图", data=bar.read_bytes(),
                                file_name=f"{gkey}_GSEA_NES_barplot.png",
                                key=f"{key_prefix}_{gkey}_bar")
-        curves = [fname for fname in name_map if fname.startswith("GSEA_plots/")]
+        curves = [fname for fname in name_map
+                  if fname.startswith("GSEA_plots/")
+                  and fname.lower().endswith(".png")]  # 只展示 PNG（gseapy 还有 .gmt/.rnk/.log 辅助文件）
         if curves:
             with st.expander(f"📈 显著通路富集曲线（{len(curves)} 张）"):
                 for fname in sorted(curves):
