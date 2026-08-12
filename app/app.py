@@ -537,7 +537,7 @@ def tab_groups() -> None:
     for g in (x.strip() for x in group_names.split(",")):
         if not g:
             continue
-        if any(ch in g for ch in "\t\r\n/\\-") or not g.strip("."):
+        if any(ch in g for ch in "\t\r\n/\\-") or "_vs_" in g or not g.strip("."):
             invalid.append(g)
             continue
         if g not in names:
@@ -671,7 +671,7 @@ def tab_run() -> None:
         index=0,
         help="HISAT2 省内存（推荐本机）；STAR 更主流，但建人/鼠索引需要 30GB+ 内存，本机可能失败",
     )
-    c3, _ = st.columns(2)
+    c3, c4 = st.columns(2)
     diffexp_label = c3.selectbox(
         "差异分析引擎",
         ["DESeq2（推荐，论文标准）", "pydiffexpress（旧引擎）"],
@@ -680,18 +680,24 @@ def tab_run() -> None:
              "并生成 VST 标准化矩阵用于热图）；pydiffexpress 为旧引擎，"
              "仅作为装不上 R/DESeq2 时的回退",
     )
+    volcano_gene_labels = c4.checkbox(
+        "火山图标注 Top 差异基因名",
+        value=True,
+        help="基因很多时可关闭以避免文字堆叠",
+    )
     diffexp_tool = "deseq2" if diffexp_label.startswith("DESeq2") else "pydiffexpress"
     st.session_state["diffexp_tool"] = diffexp_tool
 
     if st.button("🚀 开始分析", type="primary"):
         _start_analysis(run_name, samples, group_of, species, refs, paired,
-                        skip_trim, alignment_tool, diffexp_tool)
+                        skip_trim, alignment_tool, diffexp_tool,
+                        volcano_gene_labels)
 
 
 def _start_analysis(run_name: str, samples: list[dict], group_of: dict,
                     species: str, refs: dict, paired: bool,
                     skip_trim: bool, alignment_tool: str,
-                    diffexp_tool: str) -> None:
+                    diffexp_tool: str, volcano_gene_labels: bool) -> None:
     """开跑前自检（磁盘 + 文件完整性）→ 生成配置 → 后台启动。"""
     if paired:
         missing_r2 = [s["id"] for s in samples if not s.get("r2")]
@@ -804,7 +810,9 @@ def _start_analysis(run_name: str, samples: list[dict], group_of: dict,
         })
         ini_path = run_dir / "run.ini"
         ini_path.write_text(ini, encoding="utf-8")
-        runner.start_run(ini_path, run_dir, run_dir / "pyseqrna.log")
+        runner.start_run(ini_path, run_dir, run_dir / "pyseqrna.log",
+                         extra_env={"VOLCANO_GENE_LABELS":
+                                    "1" if volcano_gene_labels else "0"})
         st.session_state.pop("done_run", None)
     except Exception as e:
         # 启动失败：清掉占位标记和半成品目录，下次可以同名重开
@@ -1141,6 +1149,12 @@ def tab_results() -> None:
 
     # ---- 图片预览：火山图/热图等直接看，不用先下载 ----
     pngs = [p for files in groups.values() for p in files if p.suffix.lower() == ".png"]
+    volcano_dir = outdir / "5.Visualization" / "Volcano"
+    if volcano_dir.exists():
+        seen = {p.resolve() for p in pngs}
+        pngs.extend(p for p in sorted(volcano_dir.glob("*"))
+                    if p.is_file() and p.suffix.lower() == ".png"
+                    and p.resolve() not in seen)
     pngs.sort(key=lambda p: (0 if "vst" in p.name.lower() else 1, p.name.lower()))
     if pngs:
         with st.expander(f"👀 图片预览（{len(pngs)} 张）", expanded=True):

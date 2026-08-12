@@ -3,14 +3,16 @@
 #  DESeq2 VST 后处理：VST 归一化矩阵 + 样本聚类热图 + DEG 热图
 #  用法：
 #    Rscript DESeq2_vst.R --counts <Raw_Counts.xlsx> --samples <samples.tsv> \
-#      --gtf <gtf> --outdir <output_dir> [--top 50] [--topvar 1000]
+#      --gtf <gtf> --outdir <output_dir> [--top 50] [--topvar 1000] \
+#      [--gene-labels 1|0]（默认 1：标注 top 显著基因）
 # ============================================================
 
 parse_args <- function(argv) {
   args <- list(counts = NULL, samples = NULL, gtf = NULL, outdir = NULL,
-               symbol_map = NULL, top = 50L, topvar = 1000L)
+               symbol_map = NULL, top = 50L, topvar = 1000L,
+               gene_labels = TRUE)
   known <- c("--counts", "--samples", "--gtf", "--outdir", "--symbol-map",
-             "--top", "--topvar")
+             "--top", "--topvar", "--gene-labels")
   i <- 1L
   while (i <= length(argv)) {
     flag <- argv[[i]]
@@ -26,6 +28,16 @@ parse_args <- function(argv) {
       value <- suppressWarnings(as.integer(value))
       if (is.na(value) || value <= 0L) {
         stop(paste0("参数 ", flag, " 必须是正整数"), call. = FALSE)
+      }
+    }
+    if (name == "gene_labels") {
+      value <- tolower(as.character(value))
+      if (value %in% c("1", "true")) {
+        value <- TRUE
+      } else if (value %in% c("0", "false")) {
+        value <- FALSE
+      } else {
+        stop(paste0("参数 ", flag, " 必须是 1/0/true/false"), call. = FALSE)
       }
     }
     args[[name]] <- value
@@ -162,7 +174,12 @@ render_deg_heatmap <- function(vst_mat, outdir, top, symbol_map) {
     rownames(heat_mat) <- symbols_for(rownames(heat_mat), symbol_map)
     pheatmap::pheatmap(
       heat_mat,
-      scale = "row"
+      scale = "row",
+      main = NA,
+      color = grDevices::colorRampPalette(
+        c("#5B83B0", "#F7F7F7", "#C1666B"))(100),
+      border_color = NA,
+      fontsize = 10
     )
     grDevices::dev.off()
   }, error = function(e) {
@@ -210,18 +227,104 @@ render_pca <- function(vst_mat, col_data, outdir) {
                        center = TRUE, scale. = FALSE)
   percent <- round(100 * summary(pca)$importance[2L, ], 1)
   conds <- as.character(col_data$condition)
-  palette <- c("#E64B35", "#4DBBD5", "#00A087", "#F39B7F", "#8491B4")
+  palette <- c("#C1666B", "#6B8EAE", "#7FA886", "#C9A227", "#8E7CA8", "#B07D4F")
   colors <- palette[as.integer(factor(conds, levels = unique(conds)))]
   pca_png <- file.path(pca_dir, "All_Samples_PCA_vst.png")
   grDevices::png(pca_png, width = 7, height = 5.5, units = "in", res = 300)
-  graphics::par(mar = c(4.5, 4.5, 1.5, 1))
+  graphics::par(mar = c(4.5, 4.5, 1.5, 4))
   graphics::plot(pca$x[, 1L], pca$x[, 2L], col = colors, pch = 16, cex = 1.4,
                  xlab = paste0("PC1 (", percent[[1L]], "%)"),
                  ylab = paste0("PC2 (", percent[[2L]], "%)"),
-                 main = "PCA (VST, top 1000 variable genes)")
-  graphics::legend("topright", legend = unique(conds), col = palette[seq_len(length(unique(conds)))],
-                   pch = 16, bty = "n")
+                 cex.lab = 1.3, cex.axis = 1.1)
+  graphics::legend("right", legend = unique(conds),
+                   col = palette[seq_len(length(unique(conds)))],
+                   pch = 16, bty = "n", inset = -0.12, xpd = NA)
   grDevices::dev.off()
+}
+
+render_volcanoes <- function(outdir, gene_labels) {
+  diff_dir <- file.path(outdir, "4.Differential_Expression")
+  if (!dir.exists(diff_dir)) {
+    return(invisible(NULL))
+  }
+  csv_files <- list.files(diff_dir, pattern = "^DESeq2_.*_vs_.*\\.csv$",
+                          full.names = TRUE)
+  for (f in csv_files) {
+    tryCatch({
+      deg_df <- utils::read.csv(f, stringsAsFactors = FALSE)
+      if (!all(c("log2FoldChange", "padj") %in% names(deg_df))) {
+        warning(paste0("火山图缺少统计列，已跳过: ", basename(f)), call. = FALSE)
+        next
+      }
+      keep <- !is.na(deg_df$log2FoldChange) & !is.na(deg_df$padj) &
+        is.finite(deg_df$log2FoldChange) & is.finite(deg_df$padj)
+      plot_df <- deg_df[keep, , drop = FALSE]
+      if (nrow(plot_df) == 0L) {
+        warning(paste0("火山图没有有效数据，已跳过: ", basename(f)), call. = FALSE)
+        next
+      }
+      lfc <- plot_df$log2FoldChange
+      neg_log_padj <- -log10(pmax(plot_df$padj, 1e-300))
+      sig <- plot_df$padj < 0.05 & abs(lfc) >= 1
+      up <- sig & lfc >= 1
+      down <- sig & lfc <= -1
+      status_col <- ifelse(up, "#C1666B", ifelse(down, "#6B8EAE", "#C8C8C8"))
+
+      base <- basename(f)
+      parts <- regmatches(base, regexec("^DESeq2_(.*)_vs_(.*)\\.csv$", base))[[1L]]
+      if (length(parts) != 3L) {
+        warning(paste0("火山图文件名无法解析，已跳过: ", base), call. = FALSE)
+        next
+      }
+      c1 <- parts[[2L]]
+      c2 <- parts[[3L]]
+      volcano_dir <- file.path(outdir, "5.Visualization", "Volcano")
+      dir.create(volcano_dir, recursive = TRUE, showWarnings = FALSE)
+      volcano_png <- file.path(volcano_dir,
+                               paste0(c1, "_vs_", c2, "_volcano.png"))
+      grDevices::png(volcano_png, width = 8, height = 6.5, units = "in", res = 300)
+      graphics::par(mar = c(7.2, 5.0, 1.2, 1.2))
+      graphics::plot(lfc, neg_log_padj, col = status_col, pch = 16, cex = 0.8,
+                     xlab = "log2 Fold Change",
+                     ylab = "-log10(adjusted p-value)",
+                     cex.lab = 1.3, cex.axis = 1.1)
+      graphics::abline(v = c(-1, 1), col = "gray60", lty = 2)
+      graphics::abline(h = -log10(0.05), col = "gray60", lty = 2)
+      graphics::legend("bottom", inset = c(0, -0.22), xpd = NA, horiz = TRUE,
+                       legend = c(sprintf("Up (%d)", sum(up)),
+                                  sprintf("Down (%d)", sum(down)),
+                                  sprintf("Not significant (%d)", sum(!sig))),
+                       col = c("#C1666B", "#6B8EAE", "#C8C8C8"),
+                       pch = 16, bty = "n")
+      if (isTRUE(gene_labels) && "Symbol" %in% names(plot_df) && any(sig)) {
+        label_symbols <- as.character(plot_df$Symbol)
+        score <- neg_log_padj + abs(lfc)
+        sig_idx <- which(sig)
+        top_idx <- sig_idx[order(score[sig_idx], decreasing = TRUE)]
+        top_idx <- top_idx[seq_len(min(10L, length(top_idx)))]
+        n_label <- length(top_idx)
+        label_x <- lfc[top_idx]
+        label_y <- neg_log_padj[top_idx]
+        # 确定性错排：按显著性排名错开，避免多个基因挤在同一个点
+        stagger_x <- ifelse(label_x < 0, -1, 1) *
+          (0.35 + 0.35 * ((seq_len(n_label) - 1L) %% 3L))
+        stagger_y <- 0.35 * ((seq_len(n_label) - 1L) %/% 3L)
+        text_x <- label_x + stagger_x
+        text_y <- label_y + stagger_y
+        graphics::segments(label_x, label_y, text_x, text_y,
+                           col = "gray45", lwd = 0.7)
+        graphics::text(text_x, text_y, labels = label_symbols[top_idx],
+                       cex = 0.55, col = "gray20")
+      }
+      grDevices::dev.off()
+    }, error = function(e) {
+      if (grDevices::dev.cur() > 1L) {
+        grDevices::dev.off()
+      }
+      warning(paste0("火山图生成失败，已跳过: ", conditionMessage(e)), call. = FALSE)
+    })
+  }
+  invisible(NULL)
 }
 
 main <- function() {
@@ -290,6 +393,7 @@ main <- function() {
                    row.names = FALSE, fileEncoding = "UTF-8")
 
   run_deseq_results(dds, condition_levels, symbol_map, args$outdir)
+  render_volcanoes(args$outdir, args$gene_labels)
   render_pca(vst_mat, col_data, args$outdir)
 
   if (nrow(vst_mat) >= 2L) {
@@ -306,7 +410,12 @@ main <- function() {
       heat_mat,
       scale = "row",
       clustering_method = "average",
-      show_rownames = FALSE
+      show_rownames = FALSE,
+      main = NA,
+      color = grDevices::colorRampPalette(
+        c("#5B83B0", "#F7F7F7", "#C1666B"))(100),
+      border_color = NA,
+      fontsize = 10
     )
     grDevices::dev.off()
   } else {

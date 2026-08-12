@@ -219,16 +219,55 @@ def _run_ora(symbols: list[str], gene_sets: dict[str, list[str]], outdir: Path):
 
 
 def _save_dotplot(df, png_path: Path, title: str, column: str = "Adjusted P-value") -> None:
-    import matplotlib
-    matplotlib.use("Agg")
-
     n = min(15, len(df))
     if n == 0:
         return
-    top = df.sort_values(column).head(n)
     try:
-        gp.dotplot(top, column=column, title=title, ofname=str(png_path),
-                   figsize=(9, max(5, n * 0.45)))
+        import math
+        import textwrap
+
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+        import pandas as pd
+        from matplotlib.colors import LinearSegmentedColormap
+
+        top = df.sort_values(column).head(n)
+        adjusted = pd.to_numeric(top[column], errors="coerce")
+        valid = adjusted.notna()
+        if not valid.any():
+            return
+        top = top.loc[valid].copy()
+        adjusted = adjusted.loc[valid]
+
+        def _overlap_size(value) -> int:
+            try:
+                return int(str(value).split("/", 1)[0])
+            except (TypeError, ValueError):
+                return 40
+
+        sizes = [max(40, min(260, _overlap_size(v))) for v in top["Overlap"]]
+        x = [-math.log10(max(float(v), 1e-300)) for v in adjusted]
+        y = list(range(len(top)))[::-1]
+        terms = [textwrap.fill(str(v), width=45) for v in top["Term"]]
+
+        fig, ax = plt.subplots(figsize=(8, max(4.5, 0.5 * n)))
+        cmap = LinearSegmentedColormap.from_list(
+            "soft_blue", ["#C7DBEF", "#2F618C"])
+        scatter = ax.scatter(x, y, s=sizes, c=adjusted, cmap=cmap,
+                             edgecolors="#6B6B6B", linewidths=0.4, alpha=0.9)
+        ax.set_yticks(y)
+        ax.set_yticklabels(terms, fontsize=8)
+        ax.set_xlabel("-log10(Adjusted P-value)", fontsize=10)
+        ax.set_ylabel("Term", fontsize=10)
+        ax.grid(True, color="#E3E3E3", linewidth=0.8, alpha=0.7)
+        ax.set_axisbelow(True)
+        cbar = fig.colorbar(scatter, ax=ax, pad=0.02)
+        cbar.set_label("Adjusted P-value", fontsize=9)
+        # title 参数保留兼容；新版气泡图按要求不渲染标题。
+        fig.tight_layout()
+        fig.savefig(png_path, dpi=300, bbox_inches="tight")
+        plt.close(fig)
     except Exception:
         return
 

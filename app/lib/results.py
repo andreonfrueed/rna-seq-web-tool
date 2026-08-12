@@ -23,6 +23,7 @@ _GROUP_LABELS = [
     ("3.Quantification", "表达矩阵 Counts"),
     ("4.Normalization", "标准化表达量 Normalized"),
     ("4.Differential_Expression", "差异表达 DEGs"),
+    ("5.Visualization/Volcano", "火山图 Volcano"),
     ("5.Visualization", "可视化图 Plots"),
     ("5.Clustering", "聚类分析 Clustering"),
     ("6.Functional_Annotation", "功能富集 Annotation"),
@@ -55,7 +56,7 @@ def find_outputs(outdir: Path) -> dict[str, list[Path]]:
             continue
         files = sorted(
             f for f in d.rglob("*")
-            if f.is_file() and _is_result_file(f)
+            if f.is_file() and _is_result_file(f) and f.resolve() not in covered
         )
         if files:
             groups[label] = files

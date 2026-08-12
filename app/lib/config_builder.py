@@ -72,7 +72,7 @@ subset = False
 [Visualization]
 pca_plot = True
 tsne_plot = True
-volcano_plot = True
+volcano_plot = {volcano_plot}
 ma_plot = True
 deg_heatmap = True
 heatmap_top_genes = 50
@@ -116,6 +116,8 @@ def build_ini(params: dict) -> str:
         gtf=str(Path(params["gtf"]).resolve()),
         outdir=str(Path(params["outdir"]).resolve()),
         diffexp_tool=params.get("diffexp_tool", "deseq2"),
+        # deseq2 引擎由 R 后处理自绘 SCI 火山图；pydiffexpress 引擎保留 pyseqrna 自带火山图
+        volcano_plot="False" if params.get("diffexp_tool", "deseq2") == "deseq2" else "True",
         species=species,
         alignment_tool=params.get("alignment_tool", "hisat2"),
         paired="True" if params.get("paired", True) else "False",

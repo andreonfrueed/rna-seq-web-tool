@@ -62,7 +62,8 @@ if [ "$DIFFEXP_TOOL" = "deseq2" ]; then
     --counts "$OUTDIR/3.Quantification/Raw_Counts.xlsx" \
     --samples "$INPUT" \
     --gtf "$FEATURE" \
-    --outdir "$OUTDIR"
+    --outdir "$OUTDIR" \
+    --gene-labels "${VOLCANO_GENE_LABELS:-1}"
   RRC=$?
   if [ "$RRC" -ne 0 ]; then
     echo "Pipeline execution failed: DESeq2 VST post-processing" >&2

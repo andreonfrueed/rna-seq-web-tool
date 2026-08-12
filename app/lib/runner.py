@@ -89,7 +89,8 @@ def _diffexp_tool_from_ini(ini_path: Path) -> str:
     return ""
 
 
-def start_run(ini_path: Path, cwd: Path, log_path: Path) -> subprocess.Popen:
+def start_run(ini_path: Path, cwd: Path, log_path: Path,
+              extra_env: dict | None = None) -> subprocess.Popen:
     """启动 pyseqrna 后台进程，并写入活动标记便于断线重连。"""
     cwd = Path(cwd)
     marker = cwd / ".active.json"
@@ -111,10 +112,13 @@ def start_run(ini_path: Path, cwd: Path, log_path: Path) -> subprocess.Popen:
             cmd = ["bash", str(wrapper), "-c", str(ini_path)]
         else:
             cmd = [pyseqrna_executable(), "-c", str(ini_path)]
+        env = env_with_bindir()
+        if extra_env:
+            env.update(extra_env)
         proc = subprocess.Popen(
             cmd,
             cwd=str(cwd),
-            env=env_with_bindir(),
+            env=env,
             stdout=f,
             stderr=subprocess.STDOUT,
             start_new_session=True,  # 独立进程组：停止时可以整组杀掉（含 STAR/hisat2 子进程）

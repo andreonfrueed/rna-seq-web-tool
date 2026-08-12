@@ -78,6 +78,16 @@ def test_build_ini_diffexp_tool_defaults_to_deseq2(tmp_path: Path):
     assert "diffexp_tool = pydiffexpress" in ini2
 
 
+def test_build_ini_volcano_plot_depends_on_engine(tmp_path: Path):
+    # deseq2 引擎关闭 pyseqrna 旧火山图（R 后处理自绘 SCI 版）；
+    # pydiffexpress 引擎不经 R 后处理，保留 pyseqrna 自带火山图
+    ini_de = config_builder.build_ini(_params(tmp_path))
+    assert "volcano_plot = False" in ini_de
+    ini_py = config_builder.build_ini(
+        {**_params(tmp_path), "diffexp_tool": "pydiffexpress"})
+    assert "volcano_plot = True" in ini_py
+
+
 # ---------------------------------------------------------------- config
 def test_load_config_defaults():
     cfg = config.load_config()
