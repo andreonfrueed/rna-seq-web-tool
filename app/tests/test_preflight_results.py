@@ -69,16 +69,31 @@ def test_find_outputs_excludes_intermediates(tmp_path: Path):
     assert "genome.fa" not in all_files    # 参考后缀排除
 
 
-def test_find_outputs_excludes_quality_trimming(tmp_path: Path):
-    """RED-05 回归：1.Quality_and_trimming 与其他中间目录统一排除。"""
+def test_find_outputs_includes_quality_reports_excludes_big_files(tmp_path: Path):
+    """质控目录：FastQC 报告（html/zip）进结果，修剪后的 fastq 大文件仍排除。"""
     out = _make_output(tmp_path)
     q = out / "1.Quality_and_trimming"
     q.mkdir()
-    (q / "trimmed.fastq.gz").write_bytes(b"x")
-    (q / "fastqc_report.html").write_text("<html></html>")
+    (q / "trimmed.fastq.gz").write_bytes(b"x")      # 大文件 → 排除
+    (q / "S1_fastqc.html").write_text("<html></html>")  # 报告 → 纳入
+    (q / "S1_fastqc.zip").write_bytes(b"PK")
     all_files = [p.name for v in results.find_outputs(out).values() for p in v]
     assert "trimmed.fastq.gz" not in all_files
-    assert "fastqc_report.html" not in all_files
+    assert "S1_fastqc.html" in all_files
+    assert "S1_fastqc.zip" in all_files
+
+
+def test_cleanup_intermediates_keeps_quality_reports(tmp_path: Path):
+    """清理中间文件：删质控目录的 fastq 大文件，保留 FastQC 报告。"""
+    out = _make_output(tmp_path)
+    q = out / "1.Quality_and_trimming"
+    q.mkdir()
+    (q / "trimmed.fastq.gz").write_bytes(b"x" * 1000)
+    (q / "S1_fastqc.html").write_text("<html></html>")
+    results.cleanup_intermediates(out)
+    assert not (q / "trimmed.fastq.gz").exists()   # 大文件被删
+    assert (q / "S1_fastqc.html").exists()         # 报告保留
+    assert q.exists()                              # 目录不被整个删除
 
 
 def test_make_zip_and_signature_cache(tmp_path: Path):

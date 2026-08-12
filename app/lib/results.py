@@ -9,7 +9,6 @@ import zipfile
 from pathlib import Path
 
 _EXCLUDE_DIR_PARTS = {
-    "1.Quality_and_trimming",  # 质控/修剪中间产物，不放进结果
     "bam_preparation", "hisat2_results", "hisat2_index",
     "star_index", "star_results", "_STARtmp", "logs",
 }
@@ -34,6 +33,8 @@ _GROUP_LABELS = [
 
 
 def _is_result_file(f: Path) -> bool:
+    # 质控目录（1.Quality_and_trimming）保留 FastQC/修剪报告（html/zip/png），
+    # 修剪后的 fastq 大文件由 _EXCLUDE_SUFFIX 排除
     for part in f.parts:
         if part in _EXCLUDE_DIR_PARTS:
             return False

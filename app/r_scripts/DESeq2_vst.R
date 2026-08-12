@@ -197,6 +197,12 @@ run_deseq_results <- function(dds, condition_levels, symbol_map, outdir) {
   diff_dir <- file.path(outdir, "4.Differential_Expression")
   gene_dir <- file.path(diff_dir, "diff_genes")
   dir.create(gene_dir, recursive = TRUE, showWarnings = FALSE)
+  # 清理 pyseqrna 内置 deseq2 写的旧 diff_genes（命名体系不同：LPS-C vs C-LPS），
+  # 避免同一比较两套文件并存——R 是 deseq2 引擎的权威差异来源
+  old_txt <- list.files(gene_dir, pattern = "\\.txt$", full.names = TRUE)
+  if (length(old_txt) > 0L) {
+    file.remove(old_txt)
+  }
   dds <- DESeq2::DESeq(dds, quiet = TRUE)
   for (i in seq_len(length(condition_levels) - 1L)) {
     for (j in (i + 1L):length(condition_levels)) {
