@@ -1229,7 +1229,9 @@ def tab_results() -> None:
                 pass  # 补充图失败不影响结果页
 
     # ---- 图片预览：火山图/热图等直接看，不用先下载 ----
-    pngs = [p for files in groups.values() for p in files if p.suffix.lower() == ".png"]
+    # 排除 pyseqrna 旧版图（已归档，单独分组下载，不进预览）
+    pngs = [p for files in groups.values() for p in files
+            if p.suffix.lower() == ".png" and not results._is_legacy(p)]
     volcano_dir = outdir / "5.Visualization" / "Volcano"
     if volcano_dir.exists():
         seen = {p.resolve() for p in pngs}

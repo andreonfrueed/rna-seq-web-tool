@@ -96,6 +96,96 @@ def test_cleanup_intermediates_keeps_quality_reports(tmp_path: Path):
     assert q.exists()                              # 目录不被整个删除
 
 
+# ---------------------------------------------------------------- pyseqrna 旧版图归档
+def _make_out_with_legacy(tmp_path: Path) -> Path:
+    """构造含 pyseqrna 旧图 + R 新图混合的输出目录。"""
+    out = tmp_path / "output"
+    vis = out / "5.Visualization"
+    # pyseqrna 旧图（目录级）
+    (vis / "Volcano_Plots").mkdir(parents=True)
+    (vis / "Volcano_Plots" / "LPS-C_volcano.png").write_bytes(b"x")
+    (vis / "MA_Plots").mkdir()
+    (vis / "MA_Plots" / "LPS-C_ma.png").write_bytes(b"x")
+    (vis / "Venn_Plots").mkdir()
+    (vis / "Venn_Plots" / "Venn_1.png").write_bytes(b"x")
+    # R 新图（应保留）——Windows 文件系统大小写不敏感，MA_plots 与 MA_Plots
+    # 实为同一物理目录，exist_ok 兼容（WSL/Linux 下是独立目录）
+    (vis / "Volcano").mkdir()
+    (vis / "Volcano" / "C_vs_LPS_volcano.png").write_bytes(b"x")
+    (vis / "MA_plots").mkdir(exist_ok=True)
+    (vis / "MA_plots" / "C_vs_LPS_MA.png").write_bytes(b"x")
+    # Sample_Plots 混合：pyseqrna *_plot.* vs R *_vst.*
+    sp = vis / "Sample_Plots"
+    sp.mkdir()
+    (sp / "All_Samples_PCA_plot.png").write_bytes(b"x")   # 旧
+    (sp / "All_Samples_t-SNE_plot.png").write_bytes(b"x")  # 旧
+    (sp / "All_Samples_PCA_vst.png").write_bytes(b"x")     # 新
+    # Heatmaps 混合：All_* 旧 vs DEG_heatmap_vst 新
+    hm = vis / "Heatmaps"
+    hm.mkdir()
+    (hm / "All_Top_50_genes_heatmap_clustered.png").write_bytes(b"x")  # 旧
+    (hm / "DEG_heatmap_vst.png").write_bytes(b"x")                     # 新
+    # 5.Clustering 混合
+    cl = out / "5.Clustering"
+    cl.mkdir()
+    (cl / "sample_clustering_samples_dendrogram.png").write_bytes(b"x")  # 旧
+    (cl / "sample_clustering_vst_heatmap.png").write_bytes(b"x")         # 新
+    return out
+
+
+def test_is_legacy_rules():
+    assert results._is_legacy(Path("5.Visualization/Volcano_Plots/a.png"))
+    assert results._is_legacy(Path("5.Visualization/MA_Plots/a.png"))
+    assert results._is_legacy(Path("5.Visualization/Sample_Plots/All_Samples_PCA_plot.png"))
+    assert results._is_legacy(Path("5.Visualization/Heatmaps/All_Top_50_genes_heatmap_clustered.png"))
+    assert results._is_legacy(Path("5.Clustering/sample_clustering_samples_dendrogram.png"))
+    # 新版图不算旧图
+    assert not results._is_legacy(Path("5.Visualization/Volcano/C_vs_LPS_volcano.png"))
+    assert not results._is_legacy(Path("5.Visualization/MA_plots/C_vs_LPS_MA.png"))
+    assert not results._is_legacy(Path("5.Visualization/Sample_Plots/All_Samples_PCA_vst.png"))
+    assert not results._is_legacy(Path("5.Visualization/Heatmaps/DEG_heatmap_vst.png"))
+    assert not results._is_legacy(Path("5.Clustering/sample_clustering_vst_heatmap.png"))
+
+
+def test_find_outputs_legacy_separate_group(tmp_path: Path):
+    out = _make_out_with_legacy(tmp_path)
+    groups = results.find_outputs(out)
+    legacy_label = "🗄️ PySeqRNA 旧版图（已归档，可忽略）"
+    legacy_names = [p.name for p in groups.get(legacy_label, [])]
+    # 旧图全在归档组
+    assert "LPS-C_volcano.png" in legacy_names
+    assert "All_Samples_PCA_plot.png" in legacy_names
+    assert "All_Top_50_genes_heatmap_clustered.png" in legacy_names
+    assert "sample_clustering_samples_dendrogram.png" in legacy_names
+    # 新图不在归档组，且在正常分组里
+    normal = [p.name for k, v in groups.items() if k != legacy_label for p in v]
+    assert "C_vs_LPS_volcano.png" in normal
+    assert "All_Samples_PCA_vst.png" in normal
+    assert "DEG_heatmap_vst.png" in normal
+    assert "sample_clustering_vst_heatmap.png" in normal
+    # 归档组在最后
+    assert list(groups)[-1] == legacy_label
+
+
+def test_make_zip_legacy_in_archive_folder(tmp_path: Path):
+    out = _make_out_with_legacy(tmp_path)
+    zp = tmp_path / "r.zip"
+    results.make_zip(out, zp)
+    import zipfile
+    names = zipfile.ZipFile(zp).namelist()
+    # 旧图收进归档前缀，新图保持原路径
+    assert "5.Visualization/PySeqRNA旧版图/Volcano_Plots/LPS-C_volcano.png" in names
+    assert "5.Visualization/PySeqRNA旧版图/Sample_Plots/All_Samples_PCA_plot.png" in names
+    assert "5.Visualization/PySeqRNA旧版图/5.Clustering/sample_clustering_samples_dendrogram.png" in names
+    assert "5.Visualization/Volcano/C_vs_LPS_volcano.png" in names
+    assert "5.Visualization/Sample_Plots/All_Samples_PCA_vst.png" in names
+    # 正常结果区（归档前缀之外）不再出现旧图目录
+    normal_names = [n for n in names if "PySeqRNA旧版图" not in n]
+    assert not any("Volcano_Plots/" in n for n in normal_names)
+    assert not any("MA_Plots/" in n for n in normal_names)
+    assert not any("Venn_Plots/" in n for n in normal_names)
+
+
 def test_make_zip_and_signature_cache(tmp_path: Path):
     out = _make_output(tmp_path)
     zp = tmp_path / "r.zip"

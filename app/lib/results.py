@@ -43,8 +43,36 @@ def _is_result_file(f: Path) -> bool:
     return True
 
 
+# ---------------------------------------------------------------- pyseqrna 旧版图归档
+# pyseqrna 自带的旧样式图与 R 论文级版本并存，按用户要求归档到单独文件夹，
+# 不混入正常结果（预览/下载分组/ZIP 内统一收进 PySeqRNA旧版图/）。
+_LEGACY_DIR_NAMES = {"Volcano_Plots", "MA_Plots", "Venn_Plots"}
+_LEGACY_PREFIX = Path("5.Visualization") / "PySeqRNA旧版图"
+
+
+def _is_legacy(f: Path) -> bool:
+    """是否 pyseqrna 旧样式图/表（R 版已替代）。
+
+    目录级：Volcano_Plots/MA_Plots/Venn_Plots 整目录是 pyseqrna 的；
+    文件级（混合目录）：Sample_Plots 的 *_plot.*（pyseqrna PCA/t-SNE）、
+    Heatmaps 的 All_*（pyseqrna 热图）、5.Clustering 非 vst_heatmap 的
+    聚类图/表（R 版是 sample_clustering_vst_heatmap.*）。
+    """
+    parts = f.parts
+    if any(p in _LEGACY_DIR_NAMES for p in parts):
+        return True
+    name = f.name
+    if "_plot." in name:
+        return True
+    if "Heatmaps" in parts and name.startswith("All_"):
+        return True
+    if "5.Clustering" in parts and "vst_heatmap" not in name:
+        return True
+    return False
+
+
 def find_outputs(outdir: Path) -> dict[str, list[Path]]:
-    """返回 {展示名: [结果文件...]}，排除中间大文件。"""
+    """返回 {展示名: [结果文件...]}，排除中间大文件；pyseqrna 旧版图单独归档分组。"""
     outdir = Path(outdir)
     if not outdir.exists():
         return {}
@@ -56,7 +84,8 @@ def find_outputs(outdir: Path) -> dict[str, list[Path]]:
             continue
         files = sorted(
             f for f in d.rglob("*")
-            if f.is_file() and _is_result_file(f) and f.resolve() not in covered
+            if f.is_file() and _is_result_file(f) and not _is_legacy(f)
+            and f.resolve() not in covered
         )
         if files:
             groups[label] = files
@@ -64,10 +93,15 @@ def find_outputs(outdir: Path) -> dict[str, list[Path]]:
     # 兜底：没被分组覆盖的结果文件
     extra = sorted(
         f for f in outdir.rglob("*")
-        if f.is_file() and _is_result_file(f) and f.resolve() not in covered
+        if f.is_file() and _is_result_file(f) and not _is_legacy(f)
+        and f.resolve() not in covered
     )
     if extra:
         groups["其他结果 Other"] = extra
+    # pyseqrna 旧版图单独归档（放最后，不污染正常结果）
+    legacy = sorted(f for f in outdir.rglob("*") if f.is_file() and _is_legacy(f))
+    if legacy:
+        groups["🗄️ PySeqRNA 旧版图（已归档，可忽略）"] = legacy
     return groups
 
 
@@ -111,7 +145,19 @@ def make_zip(outdir: Path, zip_path: Path,
     files: list[tuple[Path, Path]] = [
         (f, f.relative_to(outdir))
         for f in outdir.rglob("*")
-        if f.is_file() and _is_result_file(f)
+        if f.is_file() and _is_result_file(f) and not _is_legacy(f)
+    ]
+    # pyseqrna 旧版图：ZIP 内统一收进 5.Visualization/PySeqRNA旧版图/，不污染正常结果。
+    # 开头的 5.Visualization/ 用归档前缀替换（5.Clustering 等则直接挂到前缀下）
+    def _legacy_arc(f: Path) -> Path:
+        rel = f.relative_to(outdir)
+        rest = rel.parts[1:] if rel.parts[0] == "5.Visualization" else rel.parts
+        return _LEGACY_PREFIX / Path(*rest)
+
+    files += [
+        (f, _legacy_arc(f))
+        for f in outdir.rglob("*")
+        if f.is_file() and _is_legacy(f)
     ]
     for d, prefix in (extra_dirs or []):
         d = Path(d)
