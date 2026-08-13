@@ -78,6 +78,14 @@ def test_build_ini_diffexp_tool_defaults_to_deseq2(tmp_path: Path):
     assert "diffexp_tool = pydiffexpress" in ini2
 
 
+def test_build_ini_alignment_stats_source_is_logs(tmp_path: Path):
+    """BUG-21 回归：比对统计源固定为 logs，避免 pyseqrna 在 auto 模式下
+    无视 HISAT2 现成日志、回退去逐个 pysam 扫 9 个约 2GB 的 BAM（实测 5.8 小时）。
+    logs 模式直接解析 .err 摘要，秒级完成。"""
+    ini = config_builder.build_ini(_params(tmp_path))
+    assert "alignment_stats_source = logs" in ini
+
+
 def test_build_ini_volcano_plot_depends_on_engine(tmp_path: Path):
     # deseq2 引擎关闭 pyseqrna 旧火山图（R 后处理自绘 SCI 版）；
     # pydiffexpress 引擎不经 R 后处理，保留 pyseqrna 自带火山图

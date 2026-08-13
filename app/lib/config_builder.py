@@ -29,7 +29,7 @@ trimming_tool = trim_galore
 skip_alignment = False
 alignment_tool = {alignment_tool}
 alignment_stats = True
-alignment_stats_source = auto
+alignment_stats_source = logs
 
 [Quantification]
 skip_quantification = False
