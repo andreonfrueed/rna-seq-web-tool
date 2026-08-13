@@ -146,3 +146,41 @@ def test_find_active_run_cleans_dead_marker(tmp_path: Path):
     marker.write_text('{"pid": 999999999}', encoding="utf-8")
     assert runner.find_active_run(runs) is None
     assert not marker.exists()  # 过期标记被清理
+
+
+# ---------------------------------------------------------------- reserve_run_name
+def test_reserve_run_name_free_name(tmp_path: Path):
+    runs = tmp_path / "runs"
+    name = runner.reserve_run_name("my_run", runs)
+    assert name == "my_run"
+    # 占位：目录 + .active.json 已创建
+    assert (runs / "my_run").is_dir()
+    assert (runs / "my_run" / ".active.json").exists()
+
+
+def test_reserve_run_name_completed_dir_gets_suffix(tmp_path: Path):
+    """BUG-15 回归：已完成的同名分析（目录在、.active.json 已被 clear_active 删）
+    也要换序号，不能复用旧目录——否则旧 output 文件会混进新结果。"""
+    runs = tmp_path / "runs"
+    (runs / "my_run" / "output").mkdir(parents=True)  # 已完成的旧结果，无 .active.json
+    name = runner.reserve_run_name("my_run", runs)
+    assert name == "my_run_1"
+    assert (runs / "my_run_1" / ".active.json").exists()
+
+
+def test_reserve_run_name_active_dir_gets_suffix(tmp_path: Path):
+    """正在运行的同名（有 .active.json）也要换序号（BUG-10 原有语义保留）。"""
+    runs = tmp_path / "runs"
+    (runs / "my_run").mkdir(parents=True)
+    (runs / "my_run" / ".active.json").write_text('{"pid": 1}', encoding="utf-8")
+    name = runner.reserve_run_name("my_run", runs)
+    assert name == "my_run_1"
+
+
+def test_reserve_run_name_increments_until_free(tmp_path: Path):
+    runs = tmp_path / "runs"
+    (runs / "my_run").mkdir(parents=True)
+    (runs / "my_run_1").mkdir(parents=True)
+    (runs / "my_run_2").mkdir(parents=True)
+    name = runner.reserve_run_name("my_run", runs)
+    assert name == "my_run_3"

@@ -14,7 +14,10 @@ _DEFAULT_CONFIG = {
     "pvalue_threshold": 0.05,
     "fdr_threshold": 0.05,
     "threads": 8,
-    "memory": 32,
+    # 内存默认值必须与 web_config.yaml 保持一致（RED-09：单一事实来源）。
+    # 之前这里写 32、yaml 写 12，两处打架——一旦 yaml 缺失/被删，默认值
+    # 会突然跳回 32，超过本机 WSL 上限（26GB）导致分析中途内存耗尽。
+    "memory": 12,
 }
 
 

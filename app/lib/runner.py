@@ -168,6 +168,38 @@ def clear_active(run_dir: Path) -> None:
     Path(run_dir).joinpath(".active.json").unlink(missing_ok=True)
 
 
+def reserve_run_name(base_name: str, runs_dir: Path) -> str:
+    """分配一个不与现有 run 冲突的目录名，并原子占位（.active.json）。
+
+    只要目标目录已存在（正在运行 / 已完成 / 残留）就换序号，**绝不复用旧目录**——
+    否则同名重跑时旧的 output 文件会残留、混进新结果（BUG-15 修复：名字避让
+    旧逻辑只防「正在运行」的同名，靠 .active.json 存在与否判断；但分析完成后
+    .active.json 已被 clear_active 删掉，同名重跑就会复用旧目录、污染结果）。
+
+    占位用 os.open 的 O_CREAT|O_EXCL 抢占：两个标签页同时点「开始分析」也不会撞名。
+    返回最终 run_name（可能带 _1/_2 后缀）。
+    """
+    run_name = base_name
+    counter = 0
+    while True:
+        target = Path(runs_dir) / run_name
+        if target.exists():
+            # 目录已存在（无论是否还在运行）→ 换序号，绝不覆盖旧结果
+            counter += 1
+            run_name = f"{base_name}_{counter}"
+            continue
+        target.mkdir(parents=True, exist_ok=True)
+        try:
+            fd = os.open(str(target / ".active.json"),
+                         os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(fd)  # 占位只需文件存在；真正的 pid 由 start_run 写入
+            return run_name
+        except FileExistsError:
+            # 并发抢占失败（另一个会话刚建了同名目录）→ 换序号重试
+            counter += 1
+            run_name = f"{base_name}_{counter}"
+
+
 def _pid_alive(pid: int) -> bool:
     """pid 是否存活，且确实是 pyseqrna 进程。
 

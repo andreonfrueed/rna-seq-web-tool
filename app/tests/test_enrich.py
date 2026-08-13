@@ -391,3 +391,70 @@ def test_finalize_falls_back_to_copy_when_rename_always_fails(
     assert final.exists() and (final / "a.csv").exists()
     assert not tmp_out.exists()
     assert out["k"] == final / "a.csv"
+
+
+def test_finalize_preserves_old_result_when_move_fails(monkeypatch, tmp_path: Path):
+    """BUG-16 回归：新结果 move 失败时，旧结果不能被删掉。
+
+    旧逻辑先 rmtree(outdir) 再 move 新目录，move 失败则旧结果没了。
+    现在改成「旧→备份 → 新→正式 → 删备份」，move 失败时把备份挪回原位。
+    """
+    import shutil as sh
+
+    old = tmp_path / "out"
+    old.mkdir()
+    (old / "old.csv").write_text("old", encoding="utf-8")
+    tmp_out = tmp_path / "out.partial"
+    tmp_out.mkdir()
+    (tmp_out / "new.csv").write_text("new", encoding="utf-8")
+    produced = {"k": tmp_out / "new.csv"}
+
+    real_move = sh.move
+    to_final = {"n": 0}
+
+    def flaky(src, dst):
+        # 只有目标是正式目录 "out" 时才失败；备份目录 "out.old" 不受影响
+        if Path(dst).name == "out":
+            to_final["n"] += 1
+            if to_final["n"] <= 3:  # 新→正式的 3 次重试全失败
+                raise PermissionError(13, "simulated drvfs lock")
+        return real_move(src, dst)
+
+    monkeypatch.setattr(sh, "move", flaky)
+    with pytest.raises(PermissionError):
+        ep._finalize(tmp_out, old, produced)
+
+    # 旧结果被回滚到原位，内容完好
+    assert (old / "old.csv").exists()
+    assert (old / "old.csv").read_text(encoding="utf-8") == "old"
+    # 备份目录已清理（回滚时挪走了）
+    assert not (tmp_path / "out.old").exists()
+
+
+def test_gsea_curve_plots_cleans_aux_files(monkeypatch, tmp_path: Path):
+    """BUG-17 回归：gseapy 在 GSEA_plots 留下的 .rnk/.gmt/.log 辅助文件应被清理，
+    只保留 PNG 曲线图，否则会混进结果 ZIP 包。"""
+    import types
+
+    def fake_prerank(rnk=None, gene_sets=None, outdir=None, **kwargs):
+        import pathlib
+        base = pathlib.Path(outdir)
+        (base / "prerank" / "gsea_T1.png").parent.mkdir(parents=True, exist_ok=True)
+        (base / "prerank" / "gsea_T1.png").write_bytes(b"\x89PNG\r\n\x1a\nx")
+        (base / "gsea_T1.rnk").write_text("gene\tscore\n", encoding="utf-8")
+        (base / "gsea_T1.gmt").write_text("T1\tdesc\tG1\n", encoding="utf-8")
+        (base / "gsea_T1.log").write_text("log\n", encoding="utf-8")
+        return types.SimpleNamespace(res2d=None)
+
+    monkeypatch.setattr(ep, "gp", types.SimpleNamespace(prerank=fake_prerank))
+    paths = ep._gsea_curve_plots(None, {"T1": ["G1"]}, ["T1"], tmp_path)
+
+    # 只返回 PNG 曲线图
+    assert len(paths) == 1
+    assert paths[0].suffix == ".png"
+    # 磁盘上只留 PNG，辅助文件全被清理
+    gsea_plots = tmp_path / "GSEA_plots"
+    remaining = [p for p in gsea_plots.rglob("*") if p.is_file()]
+    assert remaining, "曲线图目录不应为空"
+    assert all(p.suffix.lower() == ".png" for p in remaining), \
+        f"辅助文件未清理干净: {[p.name for p in remaining]}"

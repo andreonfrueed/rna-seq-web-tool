@@ -98,3 +98,13 @@ def test_load_config_defaults():
     # config.py 的兜底默认键
     assert cfg["fold_threshold"] == 2.0
     assert cfg["pvalue_threshold"] == 0.05
+
+
+def test_build_ini_thresholds_have_defaults(tmp_path: Path):
+    """RED-10 回归：fold/pvalue 阈值漏传时用安全默认值，而非 KeyError。"""
+    p = _params(tmp_path)
+    del p["fold_threshold"]
+    del p["pvalue_threshold"]
+    ini = config_builder.build_ini(p)
+    assert "fold_threshold = 2.0" in ini
+    assert "pvalue_threshold = 0.05" in ini

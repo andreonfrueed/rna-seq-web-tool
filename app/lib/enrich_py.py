@@ -280,7 +280,9 @@ def _save_dotplot(df, png_path: Path, title: str, column: str = "Adjusted P-valu
         fig.savefig(png_path, dpi=300, bbox_inches="tight")
         _audit_fig_png(fig, png_path)  # 出图自检（缺字/裁切/PNG 有效性）
         plt.close(fig)
-    except Exception:
+    except Exception as e:
+        # RED-11：出图失败不再静默吞掉，记日志方便排查
+        logger.warning("气泡图绘制失败（%s）: %s", png_path, e)
         return
 
 
@@ -332,26 +334,48 @@ def _rewrite_produced_paths(produced: dict[str, Path], tmp_root: Path, final_roo
     return out
 
 
-def _finalize(tmp_outdir: Path, outdir: Path, produced: dict[str, Path]) -> dict[str, Path]:
-    """原子提交：删旧目录（若存在）→ 移动临时目录为正式目录，并改写路径。
+def _move_dir_retry(src: Path, dst: Path) -> None:
+    """移动目录（3 次短重试）。
 
-    WSL 挂载盘（/mnt/?, 9p/drvfs）下，大量文件刚写完立即 rename 目录会
-    偶发 PermissionError（Windows 侧实时扫描/延迟写锁文件）。短重试后仍
-    失败时改用 shutil.move 的逐文件复制 fallback（目录级 rename 被锁时
-    单文件复制通常不受影响）；原生文件系统上首次 rename 即成功、保持原子。
+    WSL 挂载盘（/mnt/?, drvfs）下大量文件刚写完立即 rename 目录会偶发
+    PermissionError（Windows 侧实时扫描/延迟写锁文件）。短重试后仍失败，
+    shutil.move 会退化为逐文件复制（目录级 rename 被锁时单文件复制通常不受影响）。
     """
-    if outdir.exists():
-        shutil.rmtree(outdir)
     last_err: OSError | None = None
     for attempt in range(3):
         try:
-            shutil.move(str(tmp_outdir), str(outdir))
-            break
+            shutil.move(str(src), str(dst))
+            return
         except OSError as e:  # drvfs 延迟写/扫描锁
             last_err = e
             time.sleep(0.5 * (attempt + 1))
-    else:
-        raise last_err  # type: ignore[misc]
+    raise last_err  # type: ignore[misc]
+
+
+def _finalize(tmp_outdir: Path, outdir: Path, produced: dict[str, Path]) -> dict[str, Path]:
+    """原子提交：旧结果 → 备份，新结果 → 正式位置，成功后删备份。
+
+    BUG-16 修复：旧逻辑先 shutil.rmtree(outdir) 再 move 新目录——若 move
+    失败（drvfs 锁，重试 3 次仍失败），旧结果已被删、新结果又没就位，
+    富集结果目录整个丢失。现在改成「旧→备份 → 新→正式 → 删备份」三步：
+    任一步失败都把备份挪回原位，旧结果绝不丢。
+    """
+    backup = outdir.with_name(outdir.name + ".old")
+    shutil.rmtree(backup, ignore_errors=True)  # 清掉上次遗留的备份
+    moved_old = False
+    if outdir.exists():
+        _move_dir_retry(outdir, backup)
+        moved_old = True
+    try:
+        _move_dir_retry(tmp_outdir, outdir)
+    except OSError:
+        if moved_old and backup.exists() and not outdir.exists():
+            try:
+                _move_dir_retry(backup, outdir)  # 回滚：旧结果挪回原位
+            except OSError:
+                pass  # 回滚也失败则放弃（备份仍在 .old 位置，可手动恢复）
+        raise
+    shutil.rmtree(backup, ignore_errors=True)  # 成功：删备份
     return _rewrite_produced_paths(produced, tmp_outdir, outdir)
 
 
@@ -603,7 +627,9 @@ def _save_nes_barplot(res2d, png_path: Path, top: int = 10) -> None:
         fig.savefig(png_path, dpi=300, bbox_inches="tight")
         _audit_fig_png(fig, png_path)  # 出图自检（缺字/裁切/PNG 有效性）
         plt.close(fig)
-    except Exception:
+    except Exception as e:
+        # RED-11：出图失败不再静默吞掉，记日志方便排查
+        logger.warning("NES 条形图绘制失败（%s）: %s", png_path, e)
         return
 
 
@@ -633,6 +659,15 @@ def _gsea_curve_plots(rnk_df, gene_sets: dict[str, list[str]],
                 gp.prerank(**kwargs)  # 老版本无 format 参数
         except Exception:
             continue
+    # gseapy 会在 GSEA_plots 里留 .rnk/.gmt/.log 等辅助文件，ZIP 打包
+    # （results.make_zip 的 extra_dirs / zip_folder 只跳过 "_" 开头条目）会把它们
+    # 混进结果包。这里只保留 PNG 曲线图，其余辅助文件清理掉（BUG-17）。
+    for junk in od.rglob("*"):
+        if junk.is_file() and junk.suffix.lower() != ".png":
+            try:
+                junk.unlink()
+            except OSError:
+                pass
     # gseapy 把图输出到 outdir/prerank/ 子目录，必须递归查找
     for p in sorted(od.rglob("*.png")):
         paths.append(p)

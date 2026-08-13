@@ -124,8 +124,9 @@ def build_ini(params: dict) -> str:
         skip_trim="True" if params.get("skip_trim", False) else "False",
         quality_trim="False" if params.get("skip_trim", False) else "True",
         fdr_threshold=params.get("fdr_threshold", 0.05),
-        fold_threshold=params["fold_threshold"],
-        pvalue_threshold=params["pvalue_threshold"],
+        # RED-10：fold/pvalue 阈值改用 .get 兜底，漏传时用安全默认值而非 KeyError
+        fold_threshold=params.get("fold_threshold", 2.0),
+        pvalue_threshold=params.get("pvalue_threshold", 0.05),
         gene_ontology="True" if params.get("gene_ontology", True) else "False",
         kegg_pathway="True" if params.get("kegg_pathway", True) else "False",
         threads=params["threads"],

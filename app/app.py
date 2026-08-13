@@ -41,8 +41,10 @@ SPECIES_LABEL = {"hsapiens": "人 (GRCh38)", "mmusculus": "小鼠 (GRCm39)"}
 
 _RE_R1 = re.compile(r"(.+)_R1(_\d+)?\.(fastq\.gz|fq\.gz|fastq|fq)$", re.I)
 _RE_R2 = re.compile(r"(.+)_R2(_\d+)?\.(fastq\.gz|fq\.gz|fastq|fq)$", re.I)
-_RE_1 = re.compile(r"(.+)_1\.(fastq\.gz|fq\.gz|fastq|fq)$", re.I)
-_RE_2 = re.compile(r"(.+)_2\.(fastq\.gz|fq\.gz|fastq|fq)$", re.I)
+# BUG-18：_1/_2 命名此前不支持 lane 后缀（sample_1_001.fastq.gz 识别失败），
+# 与 _R1/_R2 对齐补上 (_\d+)?
+_RE_1 = re.compile(r"(.+)_1(_\d+)?\.(fastq\.gz|fq\.gz|fastq|fq)$", re.I)
+_RE_2 = re.compile(r"(.+)_2(_\d+)?\.(fastq\.gz|fq\.gz|fastq|fq)$", re.I)
 _RE_SINGLE = re.compile(r"(.+)\.(fastq\.gz|fq\.gz|fastq|fq)$", re.I)
 # ZIP 下载的两级阈值（v2.1 修复 BUG-01）：
 # - 缓存阈值：ZIP 字节进 session_state 内存的上限
@@ -762,26 +764,11 @@ def _start_analysis(run_name: str, samples: list[dict], group_of: dict,
         st.error("分组信息有变化，请回『分组与参数』页重新确认分组。")
         return
 
-    # 名称避让（BUG-10 修复）：先原子抢占 .active.json 占位再启动。
-    # 旧逻辑只检查 output 目录是否存在，两个标签页同时点「开始分析」
-    # 会各自通过检查、拿到同名 run_name；现在用 os.open 的 O_CREAT|O_EXCL
-    # 抢占占位标记，谁先创建成功谁用这个名字，另一方自动换序号。
+    # 名称避让（BUG-10 + BUG-15 修复）：分配不冲突的目录名并原子占位。
+    # 只要目录已存在（正在运行/已完成/残留）就换序号，绝不复用旧目录，
+    # 否则同名重跑会把旧的 output 文件混进新结果。逻辑在 runner.reserve_run_name。
     base_name = run_name
-    counter = 0
-    run_name = base_name
-    while True:
-        target = RUNS_DIR / run_name
-        target.mkdir(parents=True, exist_ok=True)
-        try:
-            fd = os.open(target / ".active.json", os.O_CREAT | os.O_EXCL | os.O_WRONLY)
-            os.close(fd)  # 占位只需要文件存在；真正的 pid 由 start_run 写入
-            break
-        except FileExistsError:
-            pass
-        # 名字被占用（可能是正在运行的分析，也可能是过期残留——
-        # find_active_run 会在下次扫描时清理过期标记），直接换序号重试
-        counter += 1
-        run_name = f"{base_name}_{counter}"
+    run_name = runner.reserve_run_name(base_name, RUNS_DIR)
     if run_name != base_name:
         st.info(f"名称「{base_name}」已使用过，为避免覆盖旧结果，本次自动改用「{run_name}」。")
 

@@ -7,5 +7,5 @@ __pycache__/
 app/run.ini
 *.active.json
 
-# WSL ʵ����ʱĿ¼������⣩
+# WSL 实测临时目录（不入库）
 .wsl-verify/
