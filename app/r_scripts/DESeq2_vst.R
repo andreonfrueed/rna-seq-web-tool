@@ -120,11 +120,28 @@ load_samples <- function(samples_path) {
 }
 
 render_deg_heatmap <- function(vst_mat, outdir, top, symbol_map) {
-  deg_xlsx <- file.path(outdir, "4.Differential_Expression", "Filtered_DEGs.xlsx")
   diff_dir <- file.path(outdir, "4.Differential_Expression")
+  deg_xlsx <- file.path(diff_dir, "Filtered_DEGs.xlsx")
   tryCatch({
     sig_genes <- character(0)
-    if (file.exists(deg_xlsx)) {
+    # BUG-19：DEG 热图的显著基因来源，首选 R 自己生成的 DESeq2 CSV——
+    # 差异表(diff_genes)、火山图、MA 图都读它，是 deseq2 引擎的权威来源。
+    # Filtered_DEGs.xlsx 是 pyseqrna 上游产物，仅作无 CSV 时的回退。
+    # 且 CSV 分支显著标准与 run_deseq_results / 火山图完全一致
+    # （padj<0.05 且 |log2FC|>=1），避免同一份数据选出两套基因。
+    csv_files <- list.files(diff_dir, pattern = "^DESeq2_.*_vs_.*\\.csv$",
+                            full.names = TRUE)
+    if (length(csv_files) > 0L) {
+      for (f in csv_files) {
+        deg_df <- utils::read.csv(f, stringsAsFactors = FALSE)
+        if (!all(c("padj", "log2FoldChange") %in% names(deg_df))) next
+        keep <- !is.na(deg_df$padj) & !is.na(deg_df$log2FoldChange) &
+          deg_df$padj < 0.05 & abs(deg_df$log2FoldChange) >= 1
+        sig_genes <- unique(c(sig_genes, as.character(deg_df$Gene[keep])))
+      }
+    } else if (file.exists(deg_xlsx)) {
+      # 回退：无 DESeq2 CSV 时读 pyseqrna 的 Filtered_DEGs.xlsx；
+      # p 值列 padj 优先、fdr 次之，消除对列顺序的依赖。
       sheets <- readxl::excel_sheets(deg_xlsx)
       for (sheet in sheets) {
         raw_deg <- readxl::read_excel(deg_xlsx, sheet = sheet)
@@ -133,22 +150,15 @@ render_deg_heatmap <- function(vst_mat, outdir, top, symbol_map) {
         if (!("Gene" %in% names(deg_df))) next
         pvalue_cols <- names(deg_df)[grepl("^(fdr|padj)", tolower(names(deg_df)))]
         if (length(pvalue_cols) == 0L) next
+        pvalue_cols <- c(pvalue_cols[grepl("^padj", tolower(pvalue_cols))],
+                         pvalue_cols[!grepl("^padj", tolower(pvalue_cols))])
         pvalues <- deg_df[[pvalue_cols[1L]]]
         keep <- !is.na(pvalues) & pvalues < 0.05
         sig_genes <- unique(c(sig_genes, as.character(deg_df$Gene[keep])))
       }
-    } else {
-      csv_files <- list.files(diff_dir, pattern = "^DESeq2_.*_vs_.*\\.csv$",
-                              full.names = TRUE)
-      for (f in csv_files) {
-        deg_df <- utils::read.csv(f, stringsAsFactors = FALSE)
-        if (!("padj" %in% names(deg_df))) next
-        keep <- !is.na(deg_df$padj) & deg_df$padj < 0.05
-        sig_genes <- unique(c(sig_genes, as.character(deg_df$Gene[keep])))
-      }
     }
     if (length(sig_genes) == 0L) {
-      warning("差异表中没有 FDR/padj < 0.05 的显著基因，跳过 DEG 热图", call. = FALSE)
+      warning("差异表中没有显著基因，跳过 DEG 热图", call. = FALSE)
       return(invisible(NULL))
     }
     sig_genes <- utils::head(sig_genes, top)

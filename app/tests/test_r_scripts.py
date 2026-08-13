@@ -46,3 +46,24 @@ def test_r_script_double_format_export():
     assert "draw_cluster_heat(cluster_pdf)" in text
     # PDF 输出路径齐全（5 类图）
     assert text.count(".pdf") >= 5
+
+
+def test_r_script_deg_heatmap_prefers_deseq_csv():
+    """BUG-19 回归：DEG 热图数据源首选 DESeq2 CSV，Filtered_DEGs.xlsx 仅作回退。
+
+    结构检查（本机无 R，只能验证源码顺序，无法真跑）：
+    CSV 首选分支必须出现在 xlsx 回退分支之前。
+    """
+    text = _r_text()
+    csv_pos = text.find("length(csv_files) > 0L")   # render_deg_heatmap 的 CSV 首选分支
+    xlsx_pos = text.find("file.exists(deg_xlsx)")   # xlsx 回退分支（全文件唯一）
+    assert csv_pos != -1, "DESeq2 CSV 首选分支缺失"
+    assert xlsx_pos != -1, "xlsx 回退分支缺失"
+    assert csv_pos < xlsx_pos, "CSV 分支应在 xlsx 回退之前（数据源首选 CSV）"
+
+
+def test_r_script_deg_heatmap_same_threshold_as_diffexp():
+    """BUG-19 回归：CSV 分支显著标准与差异表/火山图一致（padj<0.05 且 |log2FC|>=1）。"""
+    text = _r_text()
+    assert "deg_df$padj < 0.05" in text
+    assert "abs(deg_df$log2FoldChange) >= 1" in text
