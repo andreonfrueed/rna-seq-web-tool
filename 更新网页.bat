@@ -16,7 +16,7 @@ if [ -f ~/rna_web_app/.web.pid ]; then
   rm -f ~/rna_web_app/.web.pid
   sleep 1
 fi
-pkill -f 'streamlit[r]un' 2>/dev/null || true
+pkill -f 'streamlit [r]un' 2>/dev/null || true
 sleep 1
 rm -rf ~/rna_web_app.bak
 if [ -d ~/rna_web_app ]; then mv ~/rna_web_app ~/rna_web_app.bak; fi

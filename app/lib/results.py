@@ -212,3 +212,44 @@ def cleanup_intermediates(outdir: Path) -> int:
             except OSError:
                 pass
     return freed
+
+
+_README_NAME = "结果说明.txt"
+_README_CONTENT = (
+    "RNA-seq 分析结果说明\n"
+    "====================\n\n"
+    "1. 为什么有「4.」和「5.」两个编号的文件夹？\n"
+    "   这是分析引擎（PySeqRNA）的固定命名规则，不是出错：\n"
+    "   - 编号 4 下面包含「标准化」和「差异表达」两个独立模块，\n"
+    "     所以出现 4.Normalization 和 4.Differential_Expression 两个文件夹；\n"
+    "   - 编号 5 下面包含「聚类」和「可视化」两个独立模块，\n"
+    "     所以出现 5.Clustering 和 5.Visualization 两个文件夹。\n"
+    "   这个编号是引擎写死的目录结构，改名会导致网页无法正常读取结果，故保持不变。\n\n"
+    "2. 各文件夹含义：\n"
+    "   1.Quality_and_trimming       数据质检（FastQC 报告）\n"
+    "   2.Alignment                  比对与比对统计\n"
+    "   3.Quantification             表达定量（原始计数）\n"
+    "   4.Normalization              标准化表达量（RPKM / VST）\n"
+    "   4.Differential_Expression    差异表达分析（DESeq2 差异表、差异基因列表）\n"
+    "   5.Clustering                 样本聚类（VST 聚类热图）\n"
+    "   5.Visualization              可视化图（火山图、MA 图、热图、PCA）\n"
+    "   6.Functional_Annotation      功能注释（GO/KEGG，需联网，可能为空）\n"
+    "   7.Report                     汇总报告（需联网，可能为空）\n"
+)
+
+
+def ensure_readme(outdir: Path) -> Path:
+    """在结果目录写《结果说明.txt》（幂等），解释 4/5 双目录命名等结构。
+
+    说明文件落在 output 根目录，会自然进入 results.zip 和结果页的「其他结果」分组，
+    用户下载后打开文件夹第一眼就能看到。幂等：内容已存在就不重写。
+    """
+    outdir = Path(outdir)
+    p = outdir / _README_NAME
+    if not p.exists():
+        try:
+            outdir.mkdir(parents=True, exist_ok=True)
+            p.write_text(_README_CONTENT, encoding="utf-8")
+        except OSError:
+            pass  # 说明文件写失败不影响结果页
+    return p

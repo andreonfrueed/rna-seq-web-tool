@@ -219,3 +219,20 @@ def test_cleanup_intermediates_frees(tmp_path: Path):
     assert not (out / "hisat2_results").exists()
     assert not (out / "3.Quantification" / "genome.fa").exists()
     assert (out / "3.Quantification" / "counts.csv").exists()  # 结果保留
+
+
+def test_ensure_readme_idempotent(tmp_path: Path):
+    """BUG-22 回归：《结果说明.txt》幂等写入，解释 4/5 双目录命名。"""
+    out = tmp_path / "output"
+    out.mkdir()
+    p1 = results.ensure_readme(out)
+    assert p1.exists()
+    content = p1.read_text(encoding="utf-8")
+    assert "4.Normalization" in content
+    assert "5.Visualization" in content
+    assert "不是出错" in content
+    mtime1 = p1.stat().st_mtime_ns
+    # 幂等：内容已存在时绝不重写
+    p2 = results.ensure_readme(out)
+    assert p2 == p1
+    assert p2.stat().st_mtime_ns == mtime1

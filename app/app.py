@@ -1177,6 +1177,8 @@ def tab_results() -> None:
                             key="selected_run")
     run_dir = RUNS_DIR / run_name
     outdir = run_dir / "output"
+    # BUG-22：写一份《结果说明.txt》解释 4/5 双目录命名（引擎固定结构，非错误）
+    results.ensure_readme(outdir)
 
     active = runner.find_active_run(RUNS_DIR)
     if active and active[0] == run_name:
@@ -1188,6 +1190,9 @@ def tab_results() -> None:
         return
     total = sum(len(v) for v in groups.values())
     st.write(f"共找到 **{total}** 个结果文件，按类别分组，可单个下载或整体打包：")
+    st.caption("提示：结果里出现两个「4.」和两个「5.」文件夹，是分析引擎的固定命名"
+               "（4 = 标准化 + 差异表达，5 = 聚类 + 可视化），不是出错，"
+               "详细说明见下载包内的《结果说明.txt》。")
 
     # ---- 打包下载（带缓存，内容没变不重新压缩；富集结果也一起打进 ZIP）----
     # RED-02 修复：ZIP 下载逻辑统一走 _zip_download_section，不再复制粘贴
