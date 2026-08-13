@@ -186,6 +186,7 @@ render_deg_heatmap <- function(vst_mat, outdir, top, symbol_map) {
       pheatmap::pheatmap(
         heat_mat,
         scale = "row",
+        cluster_cols = FALSE,  # BUG-20：样本列按 samples.tsv 顺序固定排列，不按表达相似度打乱
         main = NA,
         color = grDevices::colorRampPalette(
           c("#5B83B0", "#F7F7F7", "#C1666B"))(100),
