@@ -82,14 +82,14 @@ venn_comparisons =
 venn_label = updown
 
 [FunctionalAnnotation]
-skip_functional_annotation = False
+skip_functional_annotation = True
 gene_ontology = {gene_ontology}
 kegg_pathway = {kegg_pathway}
 go_pvalue_threshold = {pvalue_threshold}
 kegg_pvalue_threshold = {pvalue_threshold}
 
 [Report]
-skip_report = False
+skip_report = True
 report_formats = html,md,json
 report_title = RNA-seq Analysis Report
 

@@ -291,6 +291,23 @@ def _read_log_lines(log_path: Path) -> list[str]:
         return []
 
 
+def _skip_report_from_ini(checkpoint: Path) -> bool:
+    """读 run.ini 的 [Report] skip_report 配置。
+
+    checkpoint 在 <run>/output/ 下，run.ini 在 <run>/ 下（父目录的父目录）。
+    跳过 report 阶段（skip_report=True）时本就不产出 7.Report 目录，
+    此时不应再把「无 7.Report」判为失败。读不到 run.ini 时按 False 处理，
+    保持原有的报告校验行为（未跳过却缺报告 = 阶段中途失败）。
+    """
+    ini_path = Path(checkpoint).parent.parent / "run.ini"
+    cp = configparser.ConfigParser()
+    try:
+        cp.read(ini_path, encoding="utf-8")
+    except (OSError, configparser.Error):
+        return False
+    return cp.getboolean("Report", "skip_report", fallback=False)
+
+
 def read_progress(log_path: Path, proc, checkpoint: Path) -> dict:
     """从日志与进程状态汇总进度。proc 可为 None（重连场景/单测）。
 
@@ -339,7 +356,9 @@ def read_progress(log_path: Path, proc, checkpoint: Path) -> dict:
         # report 是收尾阶段，但 pyseqrna 从不把它写进 checkpoint（已核对源码），
         # 所以直接验证报告产物：没有 7.Report 说明有阶段中途失败（如 KEGG 断网）
         # 却仍正常退出，旧逻辑会把这种运行误报为 🎉成功。
-        if success:
+        # 方案 B：默认跳过功能注释与报告（上游 GO/KEGG 服务已失效），
+        # 此时 7.Report 不产出是预期行为，不再判为失败。
+        if success and not _skip_report_from_ini(checkpoint):
             report_dir = Path(checkpoint).parent / "7.Report"
             try:
                 if not report_dir.is_dir() or not any(report_dir.iterdir()):

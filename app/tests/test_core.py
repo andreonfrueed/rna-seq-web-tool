@@ -96,6 +96,13 @@ def test_build_ini_volcano_plot_depends_on_engine(tmp_path: Path):
     assert "volcano_plot = True" in ini_py
 
 
+def test_build_ini_skips_annotation_and_report(tmp_path: Path):
+    """方案 B 回归：功能注释与报告阶段默认跳过（上游 GO/KEGG 服务已失效）。"""
+    ini = config_builder.build_ini(_params(tmp_path))
+    assert "skip_functional_annotation = True" in ini
+    assert "skip_report = True" in ini
+
+
 # ---------------------------------------------------------------- config
 def test_load_config_defaults():
     cfg = config.load_config()

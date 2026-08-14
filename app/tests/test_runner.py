@@ -118,6 +118,34 @@ def test_read_progress_success_needs_checkpoint_and_report(tmp_path: Path):
     assert p["returncode"] == 0
 
 
+def test_skip_report_from_ini(tmp_path: Path):
+    """读 run.ini 的 skip_report：读不到/False 时为 False，True 时为 True。"""
+    # 没有 run.ini → 默认 False（保持原报告校验）
+    assert runner._skip_report_from_ini(tmp_path / "output" / "ck.json") is False
+    # 明确的 skip_report
+    (tmp_path / "run.ini").write_text("[Report]\nskip_report = True\n",
+                                      encoding="utf-8")
+    assert runner._skip_report_from_ini(tmp_path / "output" / "ck.json") is True
+    (tmp_path / "run.ini").write_text("[Report]\nskip_report = False\n",
+                                      encoding="utf-8")
+    assert runner._skip_report_from_ini(tmp_path / "output" / "ck.json") is False
+
+
+def test_read_progress_skip_report_does_not_require_report(tmp_path: Path):
+    """方案 B：skip_report=True 时 7.Report 不产出是预期，不再判为失败。"""
+    out = tmp_path / "output"
+    out.mkdir()
+    (tmp_path / "run.ini").write_text("[Report]\nskip_report = True\n",
+                                      encoding="utf-8")
+    ck = out / "pyseqrna_checkpoint.json"
+    ck.write_text("{}", encoding="utf-8")
+    log = _write(tmp_path, "End of PySeqRNA 1.0.0 Session\n")
+    p = runner.read_progress(log, FakeProc(0), ck)
+    assert p["done"] is True
+    assert p["success"] is True
+    assert p["returncode"] == 0
+
+
 def test_read_progress_failed_marker(tmp_path: Path):
     log = _write(tmp_path, "Pipeline execution failed\n")
     ck = tmp_path / "checkpoint.json"

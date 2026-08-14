@@ -233,8 +233,6 @@ _README_CONTENT = (
     "   4.Differential_Expression    差异表达分析（DESeq2 差异表、差异基因列表）\n"
     "   5.Clustering                 样本聚类（VST 聚类热图）\n"
     "   5.Visualization              可视化图（火山图、MA 图、热图、PCA）\n"
-    "   6.Functional_Annotation      功能注释（GO/KEGG，需联网，可能为空）\n"
-    "   7.Report                     汇总报告（需联网，可能为空）\n"
 )
 
 
