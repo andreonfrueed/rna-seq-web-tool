@@ -83,3 +83,12 @@ def test_r_script_all_heatmaps_fixed_sample_order_bug20_bug23():
     assert "cluster_cols = FALSE" in deg_seg, "DEG 热图应固定样本列顺序"
     cluster_seg = text[cluster_start:cluster_end]
     assert "cluster_cols = FALSE" in cluster_seg, "样本聚类热图也应固定样本列顺序"
+
+
+def test_r_script_heatmap_columns_control_first_bug24():
+    """BUG-24 回归：样本列按 condition_levels 重排（对照组最左），col_data 同步重排。"""
+    text = _r_text()
+    assert "col_order <- rownames(col_data)" in text
+    assert "match(as.character(col_data$condition), condition_levels)" in text
+    assert "vst_mat <- vst_mat[, col_order, drop = FALSE]" in text
+    assert "col_data <- col_data[col_order, , drop = FALSE]" in text

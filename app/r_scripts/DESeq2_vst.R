@@ -523,6 +523,15 @@ main <- function() {
   )
   vsd <- DESeq2::vst(dds, blind = TRUE)
   vst_mat <- SummarizedExperiment::assay(vsd)
+  # BUG-24：样本列按 condition_levels 重排（首位即对照/参考组，处理组在后），
+  # 组内按样本名排序；col_data 同步重排，保证 PCA 颜色与样本列一一对应。
+  # 热图/VST 矩阵列序因此统一为「对照组 → 处理组」，符合阅读直觉与「对照 vs 处理」命名。
+  col_order <- rownames(col_data)[order(
+    match(as.character(col_data$condition), condition_levels),
+    rownames(col_data)
+  )]
+  vst_mat <- vst_mat[, col_order, drop = FALSE]
+  col_data <- col_data[col_order, , drop = FALSE]
 
   norm_dir <- file.path(args$outdir, "4.Normalization")
   dir.create(norm_dir, recursive = TRUE, showWarnings = FALSE)
