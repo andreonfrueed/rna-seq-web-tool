@@ -28,7 +28,16 @@ from lib import (config, config_builder, enrich_py, env_check, plots,
 
 VERSION = "2.1"
 
-st.set_page_config(page_title="RNA 分析小助手", page_icon="🧬", layout="wide")
+st.set_page_config(
+    page_title="RNA 分析小助手",
+    page_icon="🧬",
+    layout="wide",
+    menu_items={
+        "Get Help": None,
+        "Report a bug": None,
+        "About": f"RNA 分析小助手 v{VERSION} · 本地运行 · 数据不上传",
+    },
+)
 
 WORKSPACE = config.workspace_dir()
 UPLOAD_DIR = WORKSPACE / "uploads"
@@ -59,7 +68,15 @@ _MAX_ZIP_DOWNLOAD_BYTES = 180 * 1024 * 1024
 
 _CSS = """
 <style>
+/* 全局字体：本地系统字体栈，中英混排、离线可用（不用联网字体） */
+.stApp {
+  font-family: -apple-system, "Segoe UI Variable Text", "Segoe UI",
+               "PingFang SC", "Microsoft YaHei", "Noto Sans SC", sans-serif;
+}
+
 .block-container {padding-top: 1.5rem; max-width: 1180px;}
+
+/* 顶部横幅 */
 .rna-banner {
   background: linear-gradient(120deg, #1d4ed8 0%, #2563eb 48%, #0ea5e9 100%);
   border-radius: 16px; padding: 26px 30px; color: #fff; margin-bottom: 4px;
@@ -67,20 +84,56 @@ _CSS = """
 }
 .rna-banner h1 {margin: 0; font-size: 1.75rem; color: #fff; letter-spacing: .5px;}
 .rna-banner .sub {color: #dbeafe; margin-top: 6px; font-size: .95rem;}
+
+/* 步骤条：普通（白底）/ 完成（浅蓝）/ 当前（主色高亮）三态 */
 .rna-steps {display: flex; gap: 8px; margin: 12px 0 20px; flex-wrap: wrap;}
 .rna-step {
   flex: 1; min-width: 110px; text-align: center; font-size: .85rem;
-  background: #f1f5fb; color: #64748b; border: 1px solid #e2e8f0;
+  background: #ffffff; color: #64748b; border: 1px solid #e2e8f0;
   border-radius: 999px; padding: 7px 10px;
+  transition: border-color .2s ease, box-shadow .2s ease, background .2s ease;
 }
 .rna-step.done {background: #e0ecff; color: #1d4ed8; border-color: #bfdbfe;}
-.rna-step.active {background: #2563eb; color: #fff; border-color: #2563eb; font-weight: 600;}
+.rna-step.active {
+  background: #2563eb; color: #fff; border-color: #2563eb; font-weight: 600;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, .28);
+}
+
+/* 指标卡：白底卡片 + 数字等宽对齐 */
 div[data-testid="stMetric"] {
-  background: #f8fafc; border: 1px solid #e2e8f0;
+  background: #ffffff; border: 1px solid #e2e8f0;
   border-radius: 12px; padding: 12px 14px;
 }
+div[data-testid="stMetricValue"] {font-variant-numeric: tabular-nums;}
+
+/* 带边框的容器（参考文件、测序文件等卡片区块） */
+[data-testid="stVerticalBlockBorderWrapper"] {
+  border: 1px solid #e5eaf1; border-radius: 12px; background: #ffffff;
+}
+
+/* 侧边栏 */
 section[data-testid="stSidebar"] {background: #f8fafc;}
 section[data-testid="stSidebar"] .block-container {padding-top: 2rem;}
+
+/* 按钮：hover 反馈、按压回弹、键盘焦点环（无障碍） */
+.stButton button, .stDownloadButton button {
+  transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+}
+.stButton button:not(:disabled):hover, .stDownloadButton button:not(:disabled):hover {
+  box-shadow: 0 2px 6px rgba(37, 99, 235, .18);
+}
+.stButton button:not(:disabled):active, .stDownloadButton button:not(:disabled):active {
+  transform: translateY(1px) scale(.99);
+}
+.stButton button:focus-visible, .stDownloadButton button:focus-visible {
+  outline: 2px solid #2563eb; outline-offset: 2px;
+}
+
+/* 标签页：选中态主色下划线 + 加粗 */
+.stTabs [data-baseweb="tab-list"] {gap: 4px;}
+.stTabs [data-baseweb="tab"] {border-radius: 8px 8px 0 0;}
+.stTabs [aria-selected="true"] {color: #1d4ed8; font-weight: 600;}
+.stTabs [data-baseweb="tab-highlight"] {background-color: #2563eb;}
 </style>
 """
 
