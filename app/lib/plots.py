@@ -157,22 +157,26 @@ def read_deg_sets(diff_dir: Path, padj_cut: float = 0.05,
 def venn_regions(sets: dict[str, set[str]]) -> dict[str, int]:
     """把 N 个集合拆成 2^N 个互斥区域（纯集合运算，供 Venn 图标注）。
 
-    返回 {"A", "AB", "ABC", ...} → 元素个数（区域键按字典序拼接）。
+    返回 {"A", "AB", "ABC", ...} → 元素个数。区域键用字母 A/B/C…，
+    按集合在 dict 中的顺序编号（与 render_venn 的圆圈/锚点一一对应）。
+    BUG-27：旧实现用集合名拼接当键（如 "C vs LPSC vs TTP"），而
+    render_venn 的 anchor 用字母键，两者对不上 → 所有数字叠在原点。
     """
     names = list(sets)
     n = len(names)
     if n < 2:
         return {}
+    letters = [chr(ord("A") + i) for i in range(n)]
     regions: dict[str, int] = {}
     for mask in range(1, 1 << n):
-        in_set = {names[i] for i in range(n) if mask & (1 << i)}
-        elem = set.intersection(*(sets[x] for x in in_set))
-        for x in names:
-            if x not in in_set:
-                elem -= sets[x]
-        key = "".join(sorted(in_set))
+        in_idx = [i for i in range(n) if mask & (1 << i)]
+        in_names = [names[i] for i in in_idx]
+        elem = set.intersection(*(sets[x] for x in in_names))
+        for i in range(n):
+            if i not in in_idx:
+                elem -= sets[names[i]]
         if elem:
-            regions[key] = len(elem)
+            regions["".join(letters[i] for i in in_idx)] = len(elem)
     return regions
 
 
@@ -251,6 +255,30 @@ def render_tsne(outdir: Path, vst_csv: Path, sample_sheet: Path,
     return _finalize_figure(fig, p, qa_map, "t-SNE")
 
 
+# ---------------------------------------------------------------- Venn 几何常量
+# 三圆 Venn（A/B 在上，C 在下）区域锚点 = 各互斥区域的质心（离线采样计算），
+# 保证数字落在各自区域中央、互不重叠（BUG-27 配套：键用字母，锚点也按字母对齐）。
+_VENN3_CENTERS = [(-0.5, 0.30), (0.5, 0.30), (0.0, -0.52)]
+_VENN3_R = 0.95
+_VENN3_ANCHORS = {
+    "A": (-0.87, 0.52), "B": (0.87, 0.52), "C": (0.0, -0.97),
+    "AB": (0.0, 0.67), "AC": (-0.55, -0.29), "BC": (0.55, -0.29),
+    "ABC": (0.0, 0.04),
+}
+_VENN3_NAME_POS = {"A": (-1.15, 1.02), "B": (1.15, 1.02), "C": (0.0, -1.62)}
+_VENN3_LIMITS = ((-2.0, 2.0), (-1.8, 1.4))
+
+_VENN2_CENTERS = [(-0.55, 0.0), (0.55, 0.0)]
+_VENN2_R = 0.85
+_VENN2_ANCHORS = {"A": (-0.95, 0.0), "B": (0.95, 0.0), "AB": (0.0, 0.0)}
+_VENN2_NAME_POS = {"A": (-1.35, 0.75), "B": (1.35, 0.75)}
+_VENN2_LIMITS = ((-1.9, 1.9), (-1.2, 1.2))
+
+
+def _venn_letters(n: int) -> list[str]:
+    return [chr(ord("A") + i) for i in range(n)]
+
+
 def render_venn(outdir: Path, sets: dict[str, set[str]],
                 qa_map: dict | None = None) -> Path | None:
     """≤3 个比较的显著基因 Venn（手绘，300dpi）。"""
@@ -259,38 +287,33 @@ def render_venn(outdir: Path, sets: dict[str, set[str]],
         return None
     regions = venn_regions(sets)
     names = list(sets)
+    letters = _venn_letters(n)
 
     plt = _try_matplotlib()
     from matplotlib.patches import Circle
     fig, ax = plt.subplots(figsize=(7, 6))
 
     if n == 2:
-        circles = [Circle((-0.55, 0), 0.85, alpha=0.35, color=_PALETTE[0]),
-                   Circle((0.55, 0), 0.85, alpha=0.35, color=_PALETTE[1])]
-        anchor = {"A": (-1.25, 0.0), "B": (1.25, 0.0), "AB": (0.0, 0.0)}
+        centers, r = _VENN2_CENTERS, _VENN2_R
+        anchor, name_pos = _VENN2_ANCHORS, _VENN2_NAME_POS
+        xlim, ylim = _VENN2_LIMITS
     else:
-        r = 0.95
-        circles = [
-            Circle((-0.5, 0.30), r, alpha=0.32, color=_PALETTE[0]),
-            Circle((0.5, 0.30), r, alpha=0.32, color=_PALETTE[1]),
-            Circle((0.0, -0.52), r, alpha=0.32, color=_PALETTE[2]),
-        ]
-        anchor = {"A": (-1.30, 0.62), "B": (1.30, 0.62), "C": (0.0, -1.25),
-                  "AB": (0.0, 0.55), "AC": (-0.62, -0.42), "BC": (0.62, -0.42),
-                  "ABC": (0.0, -0.18)}
+        centers, r = _VENN3_CENTERS, _VENN3_R
+        anchor, name_pos = _VENN3_ANCHORS, _VENN3_NAME_POS
+        xlim, ylim = _VENN3_LIMITS
 
-    for c in circles:
-        ax.add_patch(c)
+    for i, (cx, cy) in enumerate(centers):
+        ax.add_patch(Circle((cx, cy), r, alpha=0.32, color=_PALETTE[i % len(_PALETTE)]))
+
     for key, cnt in regions.items():
         x, y = anchor.get(key, (0, 0))
         ax.text(x, y, str(cnt), ha="center", va="center", fontsize=11,
                 fontweight="bold", color="#333333")
     for i, name in enumerate(names):
-        x, y = ([-1.35, 1.35, 0.0][i], [0.72, 0.72, -1.35][i]) if n == 3 \
-            else ([-1.35, 1.35][i], [0.72, 0.72][i])
+        x, y = name_pos[letters[i]]
         ax.text(x, y, name, ha="center", va="center", fontsize=11, color="#222222")
-    ax.set_xlim(-1.9, 1.9)
-    ax.set_ylim(-1.7, 1.3)
+    ax.set_xlim(*xlim)
+    ax.set_ylim(*ylim)
     ax.set_aspect("equal")
     ax.axis("off")
     fig.tight_layout()
@@ -313,9 +336,12 @@ def render_upset(outdir: Path, sets: dict[str, set[str]], top_n: int = 15,
 
     plt = _try_matplotlib()
     fig = plt.figure(figsize=(max(8, 0.55 * n_combo), 6.5))
-    ax_bar = fig.add_axes([0.28, 0.52, 0.64, 0.36])
-    ax_mat = fig.add_axes([0.28, 0.12, 0.64, 0.32])
-    ax_size = fig.add_axes([0.06, 0.12, 0.18, 0.72])
+    # 布局（figure 分数坐标）：左侧「集合大小」窄面板，右侧上下两块留足缝隙，
+    # 让交集柱状图的纵轴刻度数字（可能到 4~5 位）落在缝隙里、不压左侧条形图
+    # （BUG-28：旧位置 [0.28, ...] 与左面板右缘 0.24 只差 0.04，刻度数字溢出压图）。
+    ax_bar = fig.add_axes([0.32, 0.52, 0.60, 0.36])
+    ax_mat = fig.add_axes([0.32, 0.12, 0.60, 0.32])
+    ax_size = fig.add_axes([0.04, 0.12, 0.14, 0.72])
 
     counts = [n for _, n in combos]
     ax_bar.bar(range(n_combo), counts, color="#6B8EAE", edgecolor="none")

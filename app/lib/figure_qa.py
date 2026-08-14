@@ -106,10 +106,15 @@ def audit_layout(fig) -> list[tuple[str, str]]:
     for msg in handler.messages[:3]:
         issues.append(("FAIL", f"缺字/乱码风险: {msg[:120]}"))
 
-    # 2) 文字裁切 + 3) 刻度重叠（需要 renderer 测量）
+    # 2) 文字裁切 + 3) 刻度重叠 + 4) 跨轴重叠（需要 renderer 测量）
     try:
         renderer = fig.canvas.get_renderer()
         bbox = fig.bbox
+
+        def _overlap(b1, b2) -> bool:
+            return (b1.x0 < b2.x1 and b2.x0 < b1.x1
+                    and b1.y0 < b2.y1 and b2.y0 < b1.y1)
+
         for ax in fig.axes:
             for txt in ax.texts + [ax.title, ax.xaxis.label, ax.yaxis.label]:
                 if not txt.get_text():
@@ -133,6 +138,47 @@ def audit_layout(fig) -> list[tuple[str, str]]:
                     prev_ext = ext
             except Exception:
                 pass
+            # 相邻刻度标签重叠（y 轴）——按竖直位置排序后比较（倒置轴也正确）
+            try:
+                exts = []
+                for t in ax.get_yticklabels():
+                    if not t.get_text():
+                        continue
+                    try:
+                        exts.append(t.get_window_extent(renderer=renderer))
+                    except Exception:
+                        pass
+                exts.sort(key=lambda e: e.y0)
+                prev = None
+                for ext in exts:
+                    if prev is not None and ext.y0 < prev.y1:
+                        issues.append(("WARN", "y 轴刻度标签重叠"))
+                        break
+                    prev = ext
+            except Exception:
+                pass
+
+        # 跨轴重叠：某轴的刻度/轴标签落到另一轴的绘图区里
+        # （UpSet 纵轴刻度数字压到左侧集合大小面板即此类，BUG-28）
+        try:
+            axes = fig.axes
+            for a in range(len(axes)):
+                for b in range(len(axes)):
+                    if a == b:
+                        continue
+                    bb_b = axes[b].get_window_extent(renderer=renderer)
+                    for label in list(axes[a].get_xticklabels()) \
+                            + list(axes[a].get_yticklabels()) \
+                            + [axes[a].xaxis.label, axes[a].yaxis.label]:
+                        if not label.get_text().strip():
+                            continue
+                        bb = label.get_window_extent(renderer=renderer)
+                        if _overlap(bb, bb_b):
+                            issues.append(("WARN", "跨轴标签重叠: "
+                                           f"'{label.get_text()[:12]}' 压到相邻子图"))
+                            break
+        except Exception:
+            pass
     except Exception:
         pass
     return issues

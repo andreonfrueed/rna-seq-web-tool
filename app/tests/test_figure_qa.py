@@ -74,6 +74,49 @@ def test_audit_layout_degrades_without_matplotlib(monkeypatch):
     assert fqa.audit_layout(FakeFig()) == []
 
 
+def test_audit_layout_detects_cross_axis_overlap():
+    """回归（BUG-28）：左面板右缘贴近右面板左缘时，纵轴刻度数字压到左面板，
+    audit_layout 必须报「跨轴标签重叠」。"""
+    mpl = pytest.importorskip("matplotlib")
+    mpl.use("Agg")
+    import matplotlib.pyplot as plt
+
+    # 复刻旧 UpSet 布局：左面板右缘 0.24，右面板左缘 0.28，缝隙仅 0.04
+    fig = plt.figure(figsize=(8, 6.5))
+    ax_bar = fig.add_axes([0.28, 0.52, 0.64, 0.36])
+    ax_size = fig.add_axes([0.06, 0.12, 0.18, 0.72])
+    ax_bar.bar([0, 1, 2], [2000, 1500, 1000])
+    ax_bar.set_ylabel("Intersection size")
+    ax_bar.set_yticks([0, 500, 1000, 1500, 2000, 2500])  # 强制 4 位刻度
+    ax_size.barh([0, 1, 2], [3500, 3000, 1000])
+    try:
+        issues = fqa.audit_layout(fig)
+    finally:
+        plt.close(fig)
+    assert any("跨轴标签重叠" in msg for _sev, msg in issues), issues
+
+
+def test_audit_layout_clean_figure_no_cross_axis_overlap():
+    """回归（BUG-28 配套）：修好布局后，自检不应误报跨轴重叠。"""
+    mpl = pytest.importorskip("matplotlib")
+    mpl.use("Agg")
+    import matplotlib.pyplot as plt
+
+    # 新 UpSet 布局：左面板右缘 0.18，右面板左缘 0.32，缝隙 0.14
+    fig = plt.figure(figsize=(8, 6.5))
+    ax_bar = fig.add_axes([0.32, 0.52, 0.60, 0.36])
+    ax_size = fig.add_axes([0.04, 0.12, 0.14, 0.72])
+    ax_bar.bar([0, 1, 2], [2000, 1500, 1000])
+    ax_bar.set_ylabel("Intersection size")
+    ax_bar.set_yticks([0, 500, 1000, 1500, 2000, 2500])
+    ax_size.barh([0, 1, 2], [3500, 3000, 1000])
+    try:
+        issues = fqa.audit_layout(fig)
+    finally:
+        plt.close(fig)
+    assert not any("跨轴标签重叠" in msg for _sev, msg in issues), issues
+
+
 # ---------------------------------------------------------------- worst_severity / save_report
 def test_worst_severity():
     assert fqa.worst_severity([]) == "CLEAN"

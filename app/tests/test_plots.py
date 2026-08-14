@@ -2,6 +2,8 @@
 from __future__ import annotations
 from pathlib import Path
 
+import pytest
+
 from lib import plots
 
 
@@ -84,6 +86,62 @@ def test_upset_combinations_top_n():
     assert len(combos) <= 3
     counts = [n for _, n in combos]
     assert counts == sorted(counts, reverse=True)  # 按大小降序
+
+
+def test_venn_regions_uses_letter_keys_not_names():
+    """回归（BUG-27）：集合名是长比较名时，区域键必须是字母 A/B/AB…，不是名字拼接。"""
+    sets = {"X vs Y": {"1", "2", "3"}, "Y vs Z": {"2", "3", "4"},
+            "X vs Z": {"3", "4", "5"}}
+    regions = plots.venn_regions(sets)
+    assert set(regions) <= {"A", "B", "C", "AB", "AC", "BC", "ABC"}
+    # 与三集合"字母命名"用例结果一致：A=1, C=1, AB=1, BC=1, ABC=1
+    assert regions == {"A": 1, "C": 1, "AB": 1, "BC": 1, "ABC": 1}
+
+
+def test_render_venn_anchors_cover_all_regions():
+    """回归（BUG-27）：render_venn 的锚点表必须覆盖 venn_regions 产生的所有键，
+    否则未知键会落到原点 (0,0) 叠在一起。"""
+    for n in (2, 3):
+        sets = {f"S{i}": {str(x) for x in range(i, i + 3)} for i in range(n)}
+        regions = plots.venn_regions(sets)
+        anchors = plots._VENN3_ANCHORS if n == 3 else plots._VENN2_ANCHORS
+        missing = set(regions) - set(anchors)
+        assert not missing, f"{n} 集：区域键 {missing} 不在锚点表里"
+
+
+def _capture_figs(monkeypatch):
+    """让 _finalize_figure 只捕获 figure 不落盘，供渲染回归测试测量布局。"""
+    captured = {}
+
+    def fake_finalize(fig, path, issues_map, name):
+        captured[name] = fig
+        return path
+
+    monkeypatch.setattr(plots, "_finalize_figure", fake_finalize)
+    return captured
+
+
+def test_render_venn_and_upset_no_overlap(tmp_path, monkeypatch):
+    """回归（BUG-27/28）：真实渲染 Venn/UpSet，自检必须报不出任何标签重叠。"""
+    pytest.importorskip("matplotlib")
+    from lib import figure_qa as fqa
+    import matplotlib.pyplot as plt
+
+    captured = _capture_figs(monkeypatch)
+    sets = {
+        "C vs LPS": {f"g{i}" for i in range(200)},
+        "C vs TTP": {f"g{i}" for i in range(100, 300)},
+        "LPS vs TTP": {f"g{i}" for i in range(250, 400)},
+    }
+    assert plots.render_venn(tmp_path, sets) is not None
+    assert plots.render_upset(tmp_path, sets) is not None
+
+    assert set(captured) == {"Venn", "UpSet"}
+    for name, fig in captured.items():
+        issues = fqa.audit_layout(fig)
+        overlaps = [msg for _sev, msg in issues if "重叠" in msg]
+        assert not overlaps, f"{name} 图仍有标签重叠: {overlaps}"
+        plt.close(fig)
 
 
 # ---------------------------------------------------------------- render_tsne（sklearn 参数兼容）
