@@ -69,9 +69,8 @@ def test_r_script_deg_heatmap_same_threshold_as_diffexp():
     assert "abs(deg_df$log2FoldChange) >= 1" in text
 
 
-def test_r_script_deg_heatmap_fixed_sample_order_bug20():
-    """BUG-20 回归：DEG 热图样本列固定为 samples.tsv 顺序，不按表达相似度打乱；
-    但样本聚类热图保留列聚类（那是它本身的功能）。"""
+def test_r_script_all_heatmaps_fixed_sample_order_bug20_bug23():
+    """BUG-20/23 回归：DEG 热图与样本聚类热图都固定样本列顺序，不按相似度打乱。"""
     text = _r_text()
     deg_start = text.find("draw_deg_heat <- function")
     deg_end = text.find("run_deseq_results <- function")
@@ -83,4 +82,4 @@ def test_r_script_deg_heatmap_fixed_sample_order_bug20():
     deg_seg = text[deg_start:deg_end]
     assert "cluster_cols = FALSE" in deg_seg, "DEG 热图应固定样本列顺序"
     cluster_seg = text[cluster_start:cluster_end]
-    assert "cluster_cols = FALSE" not in cluster_seg, "样本聚类热图应保留列聚类"
+    assert "cluster_cols = FALSE" in cluster_seg, "样本聚类热图也应固定样本列顺序"

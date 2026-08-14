@@ -557,6 +557,7 @@ main <- function() {
         heat_mat,
         scale = "row",
         clustering_method = "average",
+        cluster_cols = FALSE,  # BUG-23：样本列统一固定顺序，与 DEG 热图一致，不再按相似度打乱
         show_rownames = FALSE,
         main = NA,
         color = grDevices::colorRampPalette(
