@@ -26,7 +26,7 @@ except Exception:  # 没装自动刷新包时退回手动刷新
 from lib import (config, config_builder, enrich_py, env_check, plots,
                  preflight, reference, results, runner, sample_sheet)
 
-VERSION = "2.1"
+VERSION = "2.1.1"
 
 st.set_page_config(
     page_title="RNA 分析小助手",

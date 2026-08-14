@@ -241,13 +241,22 @@ def ensure_readme(outdir: Path) -> Path:
 
     说明文件落在 output 根目录，会自然进入 results.zip 和结果页的「其他结果」分组，
     用户下载后打开文件夹第一眼就能看到。幂等：内容已存在就不重写。
+
+    竞态守卫（BUG-26）：引擎（pyseqrna）非交互模式要求 output 目录必须由它自己
+    先创建——若网页侧抢先 mkdir(output)，引擎启动时会因「Output directory already
+    exists」抛 FileExistsError 拒启。触发机制：Streamlit 每次 rerun 会执行全部 tab
+    的函数体（不只当前激活的 tab），用户点「开始分析」→ st.rerun() → tab_results()
+    无条件调用本函数建 output，而引擎冷启动要几秒，轮到它 create_main_output_directory
+    时目录已存在。所以 output 不存在时绝不 mkdir，等引擎建好目录后再补写说明文件。
     """
     outdir = Path(outdir)
     p = outdir / _README_NAME
-    if not p.exists():
-        try:
-            outdir.mkdir(parents=True, exist_ok=True)
-            p.write_text(_README_CONTENT, encoding="utf-8")
-        except OSError:
-            pass  # 说明文件写失败不影响结果页
+    if p.exists():
+        return p
+    if not outdir.exists():
+        return p  # 引擎还没建 output，绝不抢先创建（见上方竞态说明）
+    try:
+        p.write_text(_README_CONTENT, encoding="utf-8")
+    except OSError:
+        pass  # 说明文件写失败不影响结果页
     return p

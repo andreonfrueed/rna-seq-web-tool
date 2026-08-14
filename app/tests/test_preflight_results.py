@@ -236,3 +236,20 @@ def test_ensure_readme_idempotent(tmp_path: Path):
     p2 = results.ensure_readme(out)
     assert p2 == p1
     assert p2.stat().st_mtime_ns == mtime1
+
+
+def test_ensure_readme_does_not_create_output_dir(tmp_path: Path):
+    """BUG-26 回归：output 目录不存在时绝不抢先创建（引擎要求自己建，抢先会拒启）。"""
+    out = tmp_path / "output"
+    assert not out.exists()
+    results.ensure_readme(out)
+    assert not out.exists()  # 引擎还没建，绝不能 mkdir
+
+
+def test_ensure_readme_writes_after_output_exists(tmp_path: Path):
+    """BUG-26 回归：引擎建好 output 后，说明文件正常补写。"""
+    out = tmp_path / "output"
+    out.mkdir()
+    p = results.ensure_readme(out)
+    assert p.exists()
+    assert "不是出错" in p.read_text(encoding="utf-8")
