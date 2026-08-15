@@ -7,6 +7,56 @@
 #      [--gene-labels 1|0]（默认 1：标注 top 显著基因）
 # ============================================================
 
+# ---------------------------------------------------------------- 统一学术配色
+# Nature Publishing Group 风格：低饱和、印刷友好、色盲可辨。
+PAL_UP    <- "#E64B35"   # 上调（暖红）
+PAL_DOWN  <- "#4DBBD5"   # 下调（青蓝）
+PAL_NS    <- "#B0B0B0"   # 不显著（浅灰）
+PAL_GROUP <- c("#E64B35", "#4DBBD5", "#00A087", "#3C5488", "#F39B7F", "#8491B4")
+# 样本聚类热图配色（绿-黑-红）
+CLUSTER_LOW  <- "#00A651"
+CLUSTER_MID  <- "#000000"
+CLUSTER_HIGH <- "#FF1A1A"
+# DEG 热图配色（蓝-白-红）
+DEG_LOW  <- "#4393C3"
+DEG_MID  <- "#F7F7F7"
+DEG_HIGH <- "#E64B35"
+
+# ---------------------------------------------------------------- GTF 基因符号映射
+parse_gtf_symbols <- function(gtf_path) {
+  # 从 GTF 离线解析 gene_id -> gene_name，返回 data.frame(gene, symbol)。
+  # 用 grep+awk+cut 只提取 gene 行（约数万行）的第 9 列属性串，
+  # 避免把整个 GTF（含数百万 exon/transcript 行）读进内存。
+  if (is.null(gtf_path) || !file.exists(gtf_path)) {
+    return(data.frame(gene = character(0), symbol = character(0),
+                      stringsAsFactors = FALSE))
+  }
+  cmd <- sprintf("grep -v '^#' %s | awk -F'\\t' '$3==\"gene\"' | cut -f9",
+                 shQuote(gtf_path))
+  attrs <- tryCatch(system(cmd, intern = TRUE), error = function(e) character(0))
+  if (length(attrs) == 0L) {
+    return(data.frame(gene = character(0), symbol = character(0),
+                      stringsAsFactors = FALSE))
+  }
+  gid <- sub('.*gene_id "([^"]+)".*', '\\1', attrs)
+  gn  <- sub('.*gene_name "([^"]+)".*', '\\1', attrs)
+  keep <- gid != attrs & gn != attrs  # sub 未匹配时返回原串，据此剔除
+  df <- data.frame(gene = gid[keep], symbol = gn[keep], stringsAsFactors = FALSE)
+  df <- df[!duplicated(df$gene), , drop = FALSE]
+  df
+}
+
+# 手写 95% 置信椭圆（二维正态协方差椭圆），不依赖 ellipse 包
+cov_ellipse <- function(x, y, level = 0.95, n = 100) {
+  m <- c(mean(x), mean(y))
+  S <- stats::cov(cbind(x, y))
+  e <- eigen(S)
+  r <- sqrt(stats::qchisq(level, df = 2))
+  t <- seq(0, 2 * pi, length.out = n)
+  pts <- t(m + r * (e$vectors %*% diag(sqrt(e$values)) %*% rbind(cos(t), sin(t))))
+  list(x = pts[, 1], y = pts[, 2])
+}
+
 parse_args <- function(argv) {
   args <- list(counts = NULL, samples = NULL, gtf = NULL, outdir = NULL,
                symbol_map = NULL, top = 50L, topvar = 1000L,
@@ -189,7 +239,7 @@ render_deg_heatmap <- function(vst_mat, outdir, top, symbol_map) {
         cluster_cols = FALSE,  # BUG-20：样本列按 samples.tsv 顺序固定排列，不按表达相似度打乱
         main = NA,
         color = grDevices::colorRampPalette(
-          c("#5B83B0", "#F7F7F7", "#C1666B"))(100),
+          c(DEG_LOW, DEG_MID, DEG_HIGH))(100),
         border_color = NA,
         fontsize = 10,
         filename = filename,
@@ -264,19 +314,34 @@ render_pca <- function(vst_mat, col_data, outdir) {
                        center = TRUE, scale. = FALSE)
   percent <- round(100 * summary(pca)$importance[2L, ], 1)
   conds <- as.character(col_data$condition)
-  palette <- c("#C1666B", "#6B8EAE", "#7FA886", "#C9A227", "#8E7CA8", "#B07D4F")
-  colors <- palette[as.integer(factor(conds, levels = unique(conds)))]
+  lv <- unique(conds)
+  colors <- PAL_GROUP[as.integer(factor(conds, levels = lv))]
   pca_png <- file.path(pca_dir, "All_Samples_PCA_vst.png")
   pca_pdf <- file.path(pca_dir, "All_Samples_PCA_vst.pdf")
-  save_figure(pca_png, pca_pdf, 7, 5.5, 300, function() {
-    graphics::par(mar = c(4.5, 4.5, 1.5, 4))
-    graphics::plot(pca$x[, 1L], pca$x[, 2L], col = colors, pch = 16, cex = 1.4,
+  save_figure(pca_png, pca_pdf, 7.2, 6, 300, function() {
+    graphics::par(mar = c(4.2, 4.2, 1.2, 4.5))
+    graphics::plot(pca$x[, 1L], pca$x[, 2L], col = colors, pch = 16, cex = 1.5,
                    xlab = paste0("PC1 (", percent[[1L]], "%)"),
                    ylab = paste0("PC2 (", percent[[2L]], "%)"),
-                   cex.lab = 1.3, cex.axis = 1.1)
-    graphics::legend("right", legend = unique(conds),
-                     col = palette[seq_len(length(unique(conds)))],
-                     pch = 16, bty = "n", inset = -0.12, xpd = NA)
+                   cex.lab = 1.3, cex.axis = 1.1, las = 1)
+    # 95% 置信椭圆（按组，手写协方差椭圆，不依赖额外包）
+    for (g in seq_along(lv)) {
+      idx <- conds == lv[g]
+      if (sum(idx) >= 2) {
+        xy <- pca$x[idx, 1:2, drop = FALSE]
+        tryCatch({
+          ell <- cov_ellipse(xy[, 1], xy[, 2])
+          graphics::lines(ell$x, ell$y, col = PAL_GROUP[g], lwd = 1.2, lty = 2)
+        }, error = function(e) NULL)
+      }
+    }
+    # 样本标签（点上方小字号，展示样本名，避免与点/椭圆重叠）
+    graphics::text(pca$x[, 1L], pca$x[, 2L], labels = rownames(pca$x),
+                   cex = 0.62, pos = 3, offset = 0.45, col = "#333333")
+    graphics::legend("topright", legend = lv,
+                     col = PAL_GROUP[seq_along(lv)],
+                     pch = 16, pt.cex = 1.4, bty = "n", inset = -0.14, xpd = NA,
+                     title = "Group", title.adj = 0)
   })
 }
 
@@ -306,7 +371,6 @@ render_volcanoes <- function(outdir, gene_labels) {
       sig <- plot_df$padj < 0.05 & abs(lfc) >= 1
       up <- sig & lfc >= 1
       down <- sig & lfc <= -1
-      status_col <- ifelse(up, "#C1666B", ifelse(down, "#6B8EAE", "#C8C8C8"))
 
       base <- basename(f)
       parts <- regmatches(base, regexec("^DESeq2_(.*)_vs_(.*)\\.csv$", base))[[1L]]
@@ -366,34 +430,40 @@ render_volcanoes <- function(outdir, gene_labels) {
           xlim <- xlim + c(-1, 1) * (0.15 * diff(xlim) + 0.5)
           ylim <- ylim + c(-1, 1) * (0.10 * diff(ylim))
         }
-        graphics::plot(lfc, neg_log_padj, col = status_col, pch = 16, cex = 0.8,
+        # 分层绘制：先画不显著（浅灰垫底），再画上/下调（显著点置顶不被盖住）
+        graphics::plot(lfc[!sig], neg_log_padj[!sig], col = PAL_NS, pch = 16,
+                       cex = 0.45, xlim = xlim, ylim = ylim,
                        xlab = "log2 Fold Change",
                        ylab = "-log10(adjusted p-value)",
-                       cex.lab = 1.3, cex.axis = 1.1,
-                       xlim = xlim, ylim = ylim)
+                       cex.lab = 1.3, cex.axis = 1.1, las = 1)
+        graphics::points(lfc[up], neg_log_padj[up], col = PAL_UP, pch = 16, cex = 0.55)
+        graphics::points(lfc[down], neg_log_padj[down], col = PAL_DOWN, pch = 16, cex = 0.55)
         graphics::abline(v = c(-1, 1), col = "gray60", lty = 2)
         graphics::abline(h = -log10(0.05), col = "gray60", lty = 2)
         graphics::legend("bottom", inset = c(0, -0.22), xpd = NA, horiz = TRUE,
                          legend = c(sprintf("Up (%d)", sum(up)),
                                     sprintf("Down (%d)", sum(down)),
                                     sprintf("Not significant (%d)", sum(!sig))),
-                         col = c("#C1666B", "#6B8EAE", "#C8C8C8"),
+                         col = c(PAL_UP, PAL_DOWN, PAL_NS),
                          pch = 16, bty = "n")
         if (!is.null(label_df) && nrow(label_df) > 0L) {
           graphics::segments(label_df$px, label_df$py,
                              label_df$tx, label_df$ty,
                              col = "gray45", lwd = 0.7)
           left_idx <- label_df$side == "down"
-          if (any(left_idx)) {
-            graphics::text(label_df$tx[left_idx], label_df$ty[left_idx],
-                           labels = label_df$sym[left_idx],
-                           cex = 0.55, col = "gray20", adj = c(1, 0.5))
+          draw_label <- function(idx, adj) {
+            if (any(idx)) {
+              # 白描边：先画白色加粗底字，再画深色细字，避免文字与点/线重叠难读
+              graphics::text(label_df$tx[idx], label_df$ty[idx],
+                             labels = label_df$sym[idx],
+                             cex = 0.62, col = "white", font = 2, adj = adj)
+              graphics::text(label_df$tx[idx], label_df$ty[idx],
+                             labels = label_df$sym[idx],
+                             cex = 0.62, col = "gray20", font = 1, adj = adj)
+            }
           }
-          if (any(!left_idx)) {
-            graphics::text(label_df$tx[!left_idx], label_df$ty[!left_idx],
-                           labels = label_df$sym[!left_idx],
-                           cex = 0.55, col = "gray20", adj = c(0, 0.5))
-          }
+          draw_label(left_idx, c(1, 0.5))
+          draw_label(!left_idx, c(0, 0.5))
         }
       })
     }, error = function(e) {
@@ -429,8 +499,6 @@ render_ma_plots <- function(outdir) {
       padj <- plot_df$padj
       padj[is.na(padj)] <- 1
       sig <- padj < 0.05 & abs(plot_df$log2FoldChange) >= 1
-      col <- ifelse(sig & plot_df$log2FoldChange > 0, "#C1666B",
-                    ifelse(sig & plot_df$log2FoldChange < 0, "#6B8EAE", "#C8C8C8"))
       base <- basename(f)
       parts <- regmatches(base, regexec("^DESeq2_(.*)_vs_(.*)\\.csv$", base))[[1L]]
       if (length(parts) != 3L) {
@@ -446,20 +514,26 @@ render_ma_plots <- function(outdir) {
         graphics::par(mar = c(5.0, 5.0, 1.2, 1.2))
         x <- log2(plot_df$baseMean)
         y <- plot_df$log2FoldChange
-        graphics::plot(x, y, col = col, pch = 16, cex = 0.6,
+        # 分层绘制：不显著垫底，显著点置顶
+        up <- sig & plot_df$log2FoldChange > 0
+        down <- sig & plot_df$log2FoldChange < 0
+        nonsig <- !sig
+        graphics::plot(x[nonsig], y[nonsig], col = PAL_NS, pch = 16, cex = 0.4,
                        xlab = "log2(mean expression)", ylab = "log2 Fold Change",
-                       cex.lab = 1.3, cex.axis = 1.1)
+                       cex.lab = 1.3, cex.axis = 1.1, las = 1)
+        graphics::points(x[up], y[up], col = PAL_UP, pch = 16, cex = 0.5)
+        graphics::points(x[down], y[down], col = PAL_DOWN, pch = 16, cex = 0.5)
         graphics::abline(h = 0, col = "gray50", lty = 2)
         ok <- is.finite(x) & is.finite(y)
         if (sum(ok) > 20) {
           smooth <- stats::lowess(x[ok], y[ok], f = 0.3)
-          graphics::lines(smooth, col = "#2F618C", lwd = 1.6)
+          graphics::lines(smooth, col = "#2F618C", lwd = 1.8)
         }
         graphics::legend("topright", inset = 0.02,
-                         legend = c(sprintf("Up (%d)", sum(sig & plot_df$log2FoldChange > 0)),
-                                    sprintf("Down (%d)", sum(sig & plot_df$log2FoldChange < 0)),
+                         legend = c(sprintf("Up (%d)", sum(up)),
+                                    sprintf("Down (%d)", sum(down)),
                                     "Not significant"),
-                         col = c("#C1666B", "#6B8EAE", "#C8C8C8"),
+                         col = c(PAL_UP, PAL_DOWN, PAL_NS),
                          pch = 16, bty = "n", cex = 0.9)
       })
     }, error = function(e) {
@@ -538,6 +612,12 @@ main <- function() {
   vst_df <- as.data.frame(vst_mat, check.names = FALSE, stringsAsFactors = FALSE)
   vst_df <- cbind(Gene = rownames(vst_mat), vst_df, stringsAsFactors = FALSE)
   symbol_map <- read_symbol_map(args$symbol_map)
+  # BUG-FIX：run_pipeline.sh 未传 --symbol-map 时 Symbol 列会退化成 Ensembl ID
+  # （如 ENSMUSG00000000001），火山图/热图只能显示基因 ID 而非基因符号。
+  # 回退为直接从 GTF 解析 gene_id -> gene_name，基因名从此可读、可投稿。
+  if (nrow(symbol_map) == 0L) {
+    symbol_map <- parse_gtf_symbols(args$gtf)
+  }
   vst_df <- cbind(Gene = vst_df$Gene,
                   Symbol = symbols_for(vst_df$Gene, symbol_map),
                   vst_df[, -1L, drop = FALSE],
@@ -570,7 +650,7 @@ main <- function() {
         show_rownames = FALSE,
         main = NA,
         color = grDevices::colorRampPalette(
-          c("#5B83B0", "#F7F7F7", "#C1666B"))(100),
+          c(CLUSTER_LOW, CLUSTER_MID, CLUSTER_HIGH))(100),
         border_color = NA,
         fontsize = 10,
         filename = filename,
