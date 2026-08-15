@@ -261,3 +261,32 @@ def test_render_tsne_old_sklearn_falls_back_to_n_iter(monkeypatch, tmp_path: Pat
     p = plots.render_tsne(out, csv, samples)
     assert p is not None and p.exists()
     assert calls["n_iter"] == 1
+
+
+# ---------------------------------------------------------------- _finalize_figure 矢量导出
+def test_finalize_figure_writes_pdf(monkeypatch, tmp_path: Path):
+    """_finalize_figure 保存 PNG 的同时导出同名 PDF 矢量版（供 6.图片源码）。"""
+    pytest.importorskip("matplotlib")
+    from lib import figure_qa as fqa
+
+    saved: list[str] = []
+
+    class FakeFig:
+        def savefig(self, p, **kw):
+            Path(p).parent.mkdir(parents=True, exist_ok=True)
+            Path(p).write_bytes(b"%PDF-1.4" if str(p).endswith(".pdf") else b"png")
+            saved.append(str(p))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(fqa, "audit_layout", lambda fig: [])
+    monkeypatch.setattr(fqa, "audit_png", lambda p: [])
+
+    png = tmp_path / "fig.png"
+    ret = plots._finalize_figure(FakeFig(), png, None, "x")
+
+    assert ret == png
+    assert png.exists()
+    assert png.with_suffix(".pdf").exists()
+    assert str(png.with_suffix(".pdf")) in saved

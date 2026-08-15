@@ -26,6 +26,7 @@ _GROUP_LABELS = [
     ("5.Visualization/Volcano", "火山图 Volcano"),
     ("5.Visualization", "可视化图 Plots"),
     ("5.Clustering", "聚类分析 Clustering"),
+    ("6.图片源码", "图片源码（矢量图 Vector）"),
     ("6.Functional_Annotation", "功能富集 Annotation"),
     ("7.Report", "报告 Report"),
     ("2.Alignment/alignment_stats", "比对统计 Alignment Stats"),
@@ -260,3 +261,30 @@ def ensure_readme(outdir: Path) -> Path:
     except OSError:
         pass  # 说明文件写失败不影响结果页
     return p
+
+
+_VECTOR_DIR = "6.图片源码"
+
+
+def collect_vector_images(outdir: Path) -> list[Path]:
+    """把结果里的矢量图（PDF）收集到「6.图片源码」，保持相对目录结构。
+
+    顾客可无限放大、并据此验证图确由代码对真实数据绘制（非 AI 图像生成）。
+    幂等：每次全量重建该目录（避免残留上一轮的旧图）。返回收集到的目标路径。
+    """
+    outdir = Path(outdir)
+    dest_root = outdir / _VECTOR_DIR
+    collected: list[Path] = []
+    if not outdir.exists():
+        return collected
+    if dest_root.exists():
+        shutil.rmtree(dest_root, ignore_errors=True)
+    for pdf in sorted(outdir.rglob("*.pdf")):
+        if _VECTOR_DIR in pdf.parts:  # 跳过 6.图片源码 自身，避免递归收集
+            continue
+        rel = pdf.relative_to(outdir)
+        dest = dest_root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(pdf, dest)
+        collected.append(dest)
+    return collected

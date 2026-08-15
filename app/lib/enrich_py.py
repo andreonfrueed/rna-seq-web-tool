@@ -279,6 +279,11 @@ def _save_dotplot(df, png_path: Path, title: str, column: str = "Adjusted P-valu
         fig.tight_layout()
         fig.savefig(png_path, dpi=300, bbox_inches="tight")
         _audit_fig_png(fig, png_path)  # 出图自检（缺字/裁切/PNG 有效性）
+        try:
+            # 矢量版（PDF）：供「6.图片源码」收集，失败不影响 PNG 主结果。
+            fig.savefig(png_path.with_suffix(".pdf"), bbox_inches="tight")
+        except Exception:
+            pass
         plt.close(fig)
     except Exception as e:
         # RED-11：出图失败不再静默吞掉，记日志方便排查
@@ -626,6 +631,11 @@ def _save_nes_barplot(res2d, png_path: Path, top: int = 10) -> None:
         fig.tight_layout()
         fig.savefig(png_path, dpi=300, bbox_inches="tight")
         _audit_fig_png(fig, png_path)  # 出图自检（缺字/裁切/PNG 有效性）
+        try:
+            # 矢量版（PDF）：供「6.图片源码」收集，失败不影响 PNG 主结果。
+            fig.savefig(png_path.with_suffix(".pdf"), bbox_inches="tight")
+        except Exception:
+            pass
         plt.close(fig)
     except Exception as e:
         # RED-11：出图失败不再静默吞掉，记日志方便排查

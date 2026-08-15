@@ -253,3 +253,39 @@ def test_ensure_readme_writes_after_output_exists(tmp_path: Path):
     p = results.ensure_readme(out)
     assert p.exists()
     assert "不是出错" in p.read_text(encoding="utf-8")
+
+
+# ---------------------------------------------------------------- collect_vector_images
+def test_collect_vector_images_mirrors_structure(tmp_path: Path):
+    """矢量图收集：把 output 下各目录的 PDF 按相对路径收到 6.图片源码，PNG 不收。"""
+    out = tmp_path / "output"
+    (out / "5.Visualization" / "Volcano").mkdir(parents=True)
+    (out / "4.Differential_Expression").mkdir(parents=True)
+    (out / "5.Visualization" / "Volcano" / "a_volcano.pdf").write_bytes(b"%PDF-1.4")
+    (out / "5.Visualization" / "Volcano" / "a_volcano.png").write_bytes(b"png")
+    (out / "4.Differential_Expression" / "Filtered_DEG.pdf").write_bytes(b"%PDF-1.4")
+
+    collected = results.collect_vector_images(out)
+
+    vdir = out / "6.图片源码"
+    assert (vdir / "5.Visualization" / "Volcano" / "a_volcano.pdf").exists()
+    assert (vdir / "4.Differential_Expression" / "Filtered_DEG.pdf").exists()
+    assert not (vdir / "5.Visualization" / "Volcano" / "a_volcano.png").exists()
+    assert len(collected) == 2
+
+
+def test_collect_vector_images_no_output_dir(tmp_path: Path):
+    """输出目录不存在时不报错，返回空列表。"""
+    assert results.collect_vector_images(tmp_path / "nope") == []
+
+
+def test_collect_vector_images_idempotent_and_no_nesting(tmp_path: Path):
+    """幂等：重复收集结果一致，且 6.图片源码 不会把自己再收进去。"""
+    out = tmp_path / "output"
+    (out / "5.Visualization").mkdir(parents=True)
+    (out / "5.Visualization" / "x.pdf").write_bytes(b"%PDF-1.4")
+
+    first = results.collect_vector_images(out)
+    second = results.collect_vector_images(out)
+    assert len(first) == len(second) == 1
+    assert not (out / "6.图片源码" / "6.图片源码").exists()

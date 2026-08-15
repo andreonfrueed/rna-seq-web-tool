@@ -57,6 +57,12 @@ def _finalize_figure(fig, path: Path, issues_map: dict | None, name: str) -> Pat
             issues_map[name] = issues
         return path
     try:
+        # 矢量版（PDF）：与 PNG 同名同目录，供「6.图片源码」收集。矢量图无
+        # dpi 概念、可无损放大；导出失败不影响 PNG 主结果（仍返回 PNG 路径）。
+        fig.savefig(path.with_suffix(".pdf"), bbox_inches="tight")
+    except Exception:
+        pass
+    try:
         fig.close()
     except Exception:
         pass

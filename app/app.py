@@ -1273,6 +1273,12 @@ def tab_results() -> None:
             except Exception:
                 pass  # 补充图失败不影响结果页
 
+    # ---- 矢量图收集：把结果里所有 PDF 收到「6.图片源码」，供顾客无损放大验证 ----
+    try:
+        results.collect_vector_images(outdir)
+    except Exception:
+        pass  # 矢量图收集失败不影响结果页
+
     # ---- 图片预览：火山图/热图等直接看，不用先下载 ----
     # 排除 pyseqrna 旧版图（已归档，单独分组下载，不进预览）
     pngs = [p for files in groups.values() for p in files
