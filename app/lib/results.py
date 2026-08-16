@@ -261,21 +261,56 @@ def ensure_readme(outdir: Path) -> Path:
         if p.exists() and p.read_text(encoding="utf-8") == _README_CONTENT:
             return p
         p.write_text(_README_CONTENT, encoding="utf-8")
-    except OSError:
-        pass  # 说明文件写失败不影响结果页
+    except (OSError, UnicodeDecodeError):
+        pass  # 说明文件写失败/旧文件非 UTF-8（如 GBK）都不影响结果页
     return p
 
 
 _VECTOR_DIR = "6.图片源码"
 
 
-def collect_vector_images(outdir: Path) -> list[Path]:
+def _collect_svgs_and_pdfs(src_root: Path, dest_root: Path, base_rel: Path) -> list[Path]:
+    """把一个源目录下的矢量图收到目标目录（SVG 优先 + PDF 兜底），保持相对结构。
+
+    返回收集到的目标路径列表。base_rel 为源目录在目标下的相对前缀：
+    主源传 Path("")（结构原样），extra 源传其展示前缀（如 GO_KEGG_富集）。
+    """
+    collected: list[Path] = []
+    if not src_root.exists():
+        return collected
+    # 1) SVG 源码优先（可编辑）
+    for svg in sorted(src_root.rglob("*.svg")):
+        if dest_root in svg.parents or svg == dest_root:  # 防递归收集自身
+            continue
+        rel = svg.relative_to(src_root)
+        dest = dest_root / base_rel / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(svg, dest)
+        collected.append(dest)
+    # 2) PDF 兜底：同目录下没有同名 .svg 的 PDF（旧 run 无 SVG 时保证目录不为空）
+    for pdf in sorted(src_root.rglob("*.pdf")):
+        if dest_root in pdf.parents or pdf == dest_root:
+            continue
+        if pdf.with_suffix(".svg").exists():
+            continue  # 已有可编辑 SVG，跳过 PDF
+        rel = pdf.relative_to(src_root)
+        dest = dest_root / base_rel / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(pdf, dest)
+        collected.append(dest)
+    return collected
+
+
+def collect_vector_images(outdir: Path,
+                          extra_sources: list[tuple[Path, str]] | None = None) -> list[Path]:
     """把结果里的 SVG 源码收集到「6.图片源码」，保持相对目录结构。
 
     顾客可用文本编辑器直接改 SVG 里的颜色/字号/标签，实现快速调整、无需重算数据；
     且 SVG 本身就是绘图代码，能证明图由真实数据生成（非 AI 图像生成）。
     幂等：每次全量重建该目录（避免残留上一轮的旧图）。返回收集到的目标路径。
 
+    extra_sources: 额外收集源 [(目录, 目标前缀)]，用于把 output 之外的结果也收进来
+    （如网页富集目录 enrich_py，前缀 GO_KEGG_富集，与 ZIP 内结构一致）。
     兜底：旧 run 的图只有 PDF、没有 SVG（引擎自带图如比对统计，或 R 后处理
     在 svglite 未装时跑出的旧产物）。对这些「同目录无同名 .svg」的 PDF，
     一并收集，保证「6.图片源码」永不为空——新 run 图会逐渐被可编辑 SVG 取代。
@@ -287,24 +322,7 @@ def collect_vector_images(outdir: Path) -> list[Path]:
         return collected
     if dest_root.exists():
         shutil.rmtree(dest_root, ignore_errors=True)
-    # 1) SVG 源码优先（可编辑）
-    for svg in sorted(outdir.rglob("*.svg")):
-        if _VECTOR_DIR in svg.parts:  # 跳过 6.图片源码 自身，避免递归收集
-            continue
-        rel = svg.relative_to(outdir)
-        dest = dest_root / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(svg, dest)
-        collected.append(dest)
-    # 2) PDF 兜底：同目录下没有同名 .svg 的 PDF（旧 run 无 SVG 时保证目录不为空）
-    for pdf in sorted(outdir.rglob("*.pdf")):
-        if _VECTOR_DIR in pdf.parts:
-            continue
-        if pdf.with_suffix(".svg").exists():
-            continue  # 已有可编辑 SVG，跳过 PDF
-        rel = pdf.relative_to(outdir)
-        dest = dest_root / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(pdf, dest)
-        collected.append(dest)
+    collected += _collect_svgs_and_pdfs(outdir, dest_root, Path(""))
+    for src, prefix in (extra_sources or []):
+        collected += _collect_svgs_and_pdfs(Path(src), dest_root, Path(prefix))
     return collected

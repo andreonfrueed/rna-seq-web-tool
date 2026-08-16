@@ -327,3 +327,44 @@ def test_ensure_readme_rewrites_stale_content(tmp_path: Path):
     content = p.read_text(encoding="utf-8")
     assert content == results._README_CONTENT
     assert "6.图片源码" in content
+
+
+def test_collect_vector_images_extra_sources_svg(tmp_path: Path):
+    """extra 源（如富集目录）里的 SVG 也收进 6.图片源码/<前缀>/。"""
+    out = tmp_path / "output"
+    out.mkdir()
+    enrich = tmp_path / "enrich_py"
+    (enrich / "C-LPS").mkdir(parents=True)
+    (enrich / "C-LPS" / "GSEA_NES_barplot.svg").write_bytes(b"<svg>")
+    (enrich / "C-LPS" / "GSEA_NES_barplot.png").write_bytes(b"png")
+
+    collected = results.collect_vector_images(
+        out, extra_sources=[(enrich, "GO_KEGG_富集")])
+    vdir = out / "6.图片源码"
+    assert (vdir / "GO_KEGG_富集" / "C-LPS" / "GSEA_NES_barplot.svg").exists()
+    assert not (vdir / "GO_KEGG_富集" / "C-LPS" / "GSEA_NES_barplot.png").exists()
+    assert len(collected) == 1
+
+
+def test_collect_vector_images_extra_sources_pdf_fallback(tmp_path: Path):
+    """extra 源只有 PDF 时走 PDF 兜底。"""
+    out = tmp_path / "output"
+    out.mkdir()
+    enrich = tmp_path / "enrich_py"
+    (enrich / "C-LPS").mkdir(parents=True)
+    (enrich / "C-LPS" / "only.pdf").write_bytes(b"%PDF-1.4")
+
+    collected = results.collect_vector_images(
+        out, extra_sources=[(enrich, "GO_KEGG_富集")])
+    vdir = out / "6.图片源码"
+    assert (vdir / "GO_KEGG_富集" / "C-LPS" / "only.pdf").exists()
+    assert len(collected) == 1
+
+
+def test_collect_vector_images_extra_sources_missing_dir(tmp_path: Path):
+    """extra 源目录不存在时行为与旧版一致（不报错、不产生额外文件）。"""
+    out = tmp_path / "output"
+    out.mkdir()
+    collected = results.collect_vector_images(
+        out, extra_sources=[(tmp_path / "nope", "X")])
+    assert collected == []

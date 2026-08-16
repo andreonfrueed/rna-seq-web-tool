@@ -1274,8 +1274,9 @@ def tab_results() -> None:
                 pass  # 补充图失败不影响结果页
 
     # ---- 矢量图收集：把结果里所有 SVG 源码收到「6.图片源码」（无 SVG 时 PDF 兜底）----
+    # 富集图也一起收（前缀 GO_KEGG_富集，与 ZIP 内结构一致）
     try:
-        results.collect_vector_images(outdir)
+        results.collect_vector_images(outdir, extra_sources=extra)
     except Exception:
         pass  # 矢量图收集失败不影响结果页
 
