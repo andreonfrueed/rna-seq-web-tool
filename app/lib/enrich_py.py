@@ -284,6 +284,14 @@ def _save_dotplot(df, png_path: Path, title: str, column: str = "Adjusted P-valu
             fig.savefig(png_path.with_suffix(".pdf"), bbox_inches="tight")
         except Exception:
             pass
+        try:
+            # SVG 源码版：svg.fonttype='none' 让文字保留为可编辑 <text> 元素，
+            # 供「6.图片源码」——顾客可直接改颜色/字号/标签，无需重算数据。
+            import matplotlib as mpl
+            with mpl.rc_context({"svg.fonttype": "none"}):
+                fig.savefig(png_path.with_suffix(".svg"), bbox_inches="tight")
+        except Exception:
+            pass
         plt.close(fig)
     except Exception as e:
         # RED-11：出图失败不再静默吞掉，记日志方便排查
@@ -634,6 +642,14 @@ def _save_nes_barplot(res2d, png_path: Path, top: int = 10) -> None:
         try:
             # 矢量版（PDF）：供「6.图片源码」收集，失败不影响 PNG 主结果。
             fig.savefig(png_path.with_suffix(".pdf"), bbox_inches="tight")
+        except Exception:
+            pass
+        try:
+            # SVG 源码版：svg.fonttype='none' 让文字保留为可编辑 <text> 元素，
+            # 供「6.图片源码」——顾客可直接改颜色/字号/标签，无需重算数据。
+            import matplotlib as mpl
+            with mpl.rc_context({"svg.fonttype": "none"}):
+                fig.savefig(png_path.with_suffix(".svg"), bbox_inches="tight")
         except Exception:
             pass
         plt.close(fig)

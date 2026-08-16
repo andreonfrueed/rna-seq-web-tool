@@ -63,6 +63,15 @@ def _finalize_figure(fig, path: Path, issues_map: dict | None, name: str) -> Pat
     except Exception:
         pass
     try:
+        # SVG 源码版：svg.fonttype='none' 让文字保留为可编辑的 <text> 元素
+        # （matplotlib 默认 'path' 会把文字转成曲线，改不了字）。顾客可直接
+        # 改颜色/字号/位置等属性值，无需重算数据。导出失败不影响 PNG/PDF。
+        import matplotlib as mpl
+        with mpl.rc_context({"svg.fonttype": "none"}):
+            fig.savefig(path.with_suffix(".svg"), bbox_inches="tight")
+    except Exception:
+        pass
+    try:
         fig.close()
     except Exception:
         pass
@@ -271,8 +280,11 @@ _VENN3_ANCHORS = {
     "AB": (0.0, 0.67), "AC": (-0.55, -0.29), "BC": (0.55, -0.29),
     "ABC": (0.0, 0.04),
 }
-_VENN3_NAME_POS = {"A": (-1.15, 1.02), "B": (1.15, 1.02), "C": (0.0, -1.62)}
-_VENN3_LIMITS = ((-2.0, 2.0), (-1.8, 1.4))
+# BUG-29：上方两圆（A/B）的组别名原位置 (-1.15,1.02)/(1.15,1.02) 到各自圆心
+# 距离约 0.97 ≈ 圆半径 0.95，文字一半压在圈里。改为沿左上/右上射线外移到
+# 圈外（到圆心约 1.33），与下方 C 的「全在圈外」效果一致；ylim 上界同步抬高。
+_VENN3_NAME_POS = {"A": (-1.5, 1.30), "B": (1.5, 1.30), "C": (0.0, -1.62)}
+_VENN3_LIMITS = ((-2.0, 2.0), (-1.8, 1.55))
 
 _VENN2_CENTERS = [(-0.55, 0.0), (0.55, 0.0)]
 _VENN2_R = 0.85

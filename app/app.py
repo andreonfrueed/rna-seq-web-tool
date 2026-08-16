@@ -1273,7 +1273,7 @@ def tab_results() -> None:
             except Exception:
                 pass  # 补充图失败不影响结果页
 
-    # ---- 矢量图收集：把结果里所有 PDF 收到「6.图片源码」，供顾客无损放大验证 ----
+    # ---- 矢量图收集：把结果里所有 SVG 源码收到「6.图片源码」（无 SVG 时 PDF 兜底）----
     try:
         results.collect_vector_images(outdir)
     except Exception:

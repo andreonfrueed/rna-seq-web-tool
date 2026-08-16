@@ -289,3 +289,41 @@ def test_collect_vector_images_idempotent_and_no_nesting(tmp_path: Path):
     second = results.collect_vector_images(out)
     assert len(first) == len(second) == 1
     assert not (out / "6.图片源码" / "6.图片源码").exists()
+
+
+def test_collect_vector_images_prefers_svg_over_pdf(tmp_path: Path):
+    """同目录有同名 SVG 与 PDF 时，只收 SVG（可编辑源码优先）。"""
+    out = tmp_path / "output"
+    (out / "5.Visualization").mkdir(parents=True)
+    (out / "5.Visualization" / "x.svg").write_bytes(b"<svg>")
+    (out / "5.Visualization" / "x.pdf").write_bytes(b"%PDF-1.4")
+
+    collected = results.collect_vector_images(out)
+    vdir = out / "6.图片源码"
+    assert (vdir / "5.Visualization" / "x.svg").exists()
+    assert not (vdir / "5.Visualization" / "x.pdf").exists()
+    assert len(collected) == 1
+
+
+def test_collect_vector_images_pdf_fallback(tmp_path: Path):
+    """旧 run 只有 PDF 时，PDF 兜底收集（保证 6.图片源码 不为空）。"""
+    out = tmp_path / "output"
+    (out / "5.Visualization").mkdir(parents=True)
+    (out / "5.Visualization" / "only.pdf").write_bytes(b"%PDF-1.4")
+
+    collected = results.collect_vector_images(out)
+    vdir = out / "6.图片源码"
+    assert (vdir / "5.Visualization" / "only.pdf").exists()
+    assert len(collected) == 1
+
+
+def test_ensure_readme_rewrites_stale_content(tmp_path: Path):
+    """《结果说明.txt》内容过期时重写（旧 run 也能补上 6.图片源码 条目）。"""
+    out = tmp_path / "output"
+    out.mkdir()
+    p = out / "结果说明.txt"
+    p.write_text("旧版说明\n没有 6.图片源码\n", encoding="utf-8")
+    results.ensure_readme(out)
+    content = p.read_text(encoding="utf-8")
+    assert content == results._README_CONTENT
+    assert "6.图片源码" in content

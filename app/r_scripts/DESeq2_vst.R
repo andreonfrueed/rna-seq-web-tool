@@ -232,7 +232,7 @@ render_deg_heatmap <- function(vst_mat, outdir, top, symbol_map) {
     deg_pdf <- file.path(heat_dir, "DEG_heatmap_vst.pdf")
     heat_mat <- vst_mat[matched_genes, , drop = FALSE]
     rownames(heat_mat) <- symbols_for(rownames(heat_mat), symbol_map)
-    draw_deg_heat <- function(filename) {
+    draw_deg_heat <- function(filename = NA) {
       pheatmap::pheatmap(
         heat_mat,
         scale = "row",
@@ -248,6 +248,9 @@ render_deg_heatmap <- function(vst_mat, outdir, top, symbol_map) {
     }
     draw_deg_heat(deg_png)  # 网页预览
     draw_deg_heat(deg_pdf)  # 期刊矢量投稿
+    # SVG 源码版（供 6.图片源码）：pheatmap 不认 .svg 后缀，套 svglite 设备画
+    save_pheatmap_svg(file.path(heat_dir, "DEG_heatmap_vst.svg"), 10, 8,
+                      function() draw_deg_heat(NA))
   }, error = function(e) {
     warning(paste0("DEG 热图生成失败，已跳过: ", conditionMessage(e)), call. = FALSE)
   })
@@ -290,9 +293,12 @@ run_deseq_results <- function(dds, condition_levels, symbol_map, outdir) {
 }
 
 # ============================================================
-# 出图双格式 helper：PNG(300dpi 网页预览) + PDF(矢量投稿)。
+# 出图三格式 helper：PNG(300dpi 网页预览) + PDF(矢量投稿) + SVG(可编辑源码)。
 # 期刊投稿要求矢量图（PDF/SVG，缩放不糊、文字可选）；
-# 同一绘图代码画两遍，分别落到两种设备。
+# 同一绘图代码画多遍，分别落到不同设备。SVG 供「6.图片源码」——顾客可直接
+# 改颜色/字号/标签，无需重算数据。注意：R 自带 grDevices::svg() 会把文字转成
+# 曲线（<text> 元素为 0，改不了字），必须用 svglite 才能保留可编辑文字；
+# svglite 未安装时静默跳过 SVG（不影响 PNG/PDF 主结果）。
 # ============================================================
 save_figure <- function(png_path, pdf_path, width, height, res = 300, plot_fn) {
   grDevices::png(png_path, width = width, height = height, units = "in", res = res)
@@ -301,6 +307,45 @@ save_figure <- function(png_path, pdf_path, width, height, res = 300, plot_fn) {
   grDevices::pdf(pdf_path, width = width, height = height)
   plot_fn()
   grDevices::dev.off()
+  # SVG 源码版：路径由 pdf 同目录同名推导（.pdf → .svg），各调用点无需改动。
+  # 必须用 svglite（R 自带 svg() 会把文字转成曲线 <text> 元素为 0，改不了字）；
+  # svglite 未安装时静默跳过 SVG（不影响 PNG/PDF 主结果）。
+  svg_path <- sub("\\.pdf$", ".svg", pdf_path)
+  if (svg_path == pdf_path) {
+    return(invisible(NULL))  # pdf_path 不是 .pdf 结尾时不能推导 SVG，避免覆盖 PDF
+  }
+  if (requireNamespace("svglite", quietly = TRUE)) {
+    tryCatch({
+      svglite::svglite(svg_path, width = width, height = height)
+      plot_fn()
+      grDevices::dev.off()
+    }, error = function(e) {
+      if (grDevices::dev.cur() > 1L) {
+        grDevices::dev.off()
+      }
+      warning(paste0("SVG 生成失败，已跳过: ", conditionMessage(e)), call. = FALSE)
+    })
+  }
+  invisible(NULL)
+}
+
+# pheatmap 热图专用的 SVG 输出：pheatmap 的 filename 不认 .svg 后缀
+# （实测报 "File type should be: pdf, png, bmp, jpg, tiff"），须先开 svglite 设备、
+# 再以 filename=NA 画到当前设备。svglite 未装时静默跳过。
+save_pheatmap_svg <- function(svg_path, width, height, draw_fn) {
+  if (!requireNamespace("svglite", quietly = TRUE)) {
+    return(invisible(NULL))
+  }
+  tryCatch({
+    svglite::svglite(svg_path, width = width, height = height)
+    draw_fn()
+    grDevices::dev.off()
+  }, error = function(e) {
+    if (grDevices::dev.cur() > 1L) {
+      grDevices::dev.off()
+    }
+    warning(paste0("SVG 生成失败，已跳过: ", conditionMessage(e)), call. = FALSE)
+  })
   invisible(NULL)
 }
 
@@ -641,7 +686,7 @@ main <- function() {
     cluster_pdf <- file.path(cluster_dir, "sample_clustering_vst_heatmap.pdf")
     heat_mat <- vst_mat[top_var_genes, , drop = FALSE]
     rownames(heat_mat) <- symbols_for(rownames(heat_mat), symbol_map)
-    draw_cluster_heat <- function(filename) {
+    draw_cluster_heat <- function(filename = NA) {
       pheatmap::pheatmap(
         heat_mat,
         scale = "row",
@@ -659,6 +704,9 @@ main <- function() {
     }
     draw_cluster_heat(cluster_png)  # 网页预览
     draw_cluster_heat(cluster_pdf)  # 期刊矢量投稿
+    # SVG 源码版（供 6.图片源码）：pheatmap 不认 .svg 后缀，套 svglite 设备画
+    save_pheatmap_svg(file.path(cluster_dir, "sample_clustering_vst_heatmap.svg"),
+                      10, 8, function() draw_cluster_heat(NA))
   } else {
     warning("VST 矩阵基因太少，跳过样本聚类热图", call. = FALSE)
   }

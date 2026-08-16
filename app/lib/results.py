@@ -26,7 +26,7 @@ _GROUP_LABELS = [
     ("5.Visualization/Volcano", "火山图 Volcano"),
     ("5.Visualization", "可视化图 Plots"),
     ("5.Clustering", "聚类分析 Clustering"),
-    ("6.图片源码", "图片源码（矢量图 Vector）"),
+    ("6.图片源码", "图片源码 SVG（可编辑源码）"),
     ("6.Functional_Annotation", "功能富集 Annotation"),
     ("7.Report", "报告 Report"),
     ("2.Alignment/alignment_stats", "比对统计 Alignment Stats"),
@@ -234,6 +234,7 @@ _README_CONTENT = (
     "   4.Differential_Expression    差异表达分析（DESeq2 差异表、差异基因列表）\n"
     "   5.Clustering                 样本聚类（VST 聚类热图）\n"
     "   5.Visualization              可视化图（火山图、MA 图、热图、PCA）\n"
+    "   6.图片源码                   各图的可编辑 SVG 源码（改颜色/字号/文字，无需重算）\n"
 )
 
 
@@ -252,11 +253,13 @@ def ensure_readme(outdir: Path) -> Path:
     """
     outdir = Path(outdir)
     p = outdir / _README_NAME
-    if p.exists():
-        return p
     if not outdir.exists():
         return p  # 引擎还没建 output，绝不抢先创建（见上方竞态说明）
+    # 内容比对而非「存在即返回」：_README_CONTENT 更新后（如新增 6.图片源码
+    # 条目），旧 run 的结果说明也要同步重写，否则用户打开结果页还是旧说明。
     try:
+        if p.exists() and p.read_text(encoding="utf-8") == _README_CONTENT:
+            return p
         p.write_text(_README_CONTENT, encoding="utf-8")
     except OSError:
         pass  # 说明文件写失败不影响结果页
@@ -267,10 +270,15 @@ _VECTOR_DIR = "6.图片源码"
 
 
 def collect_vector_images(outdir: Path) -> list[Path]:
-    """把结果里的矢量图（PDF）收集到「6.图片源码」，保持相对目录结构。
+    """把结果里的 SVG 源码收集到「6.图片源码」，保持相对目录结构。
 
-    顾客可无限放大、并据此验证图确由代码对真实数据绘制（非 AI 图像生成）。
+    顾客可用文本编辑器直接改 SVG 里的颜色/字号/标签，实现快速调整、无需重算数据；
+    且 SVG 本身就是绘图代码，能证明图由真实数据生成（非 AI 图像生成）。
     幂等：每次全量重建该目录（避免残留上一轮的旧图）。返回收集到的目标路径。
+
+    兜底：旧 run 的图只有 PDF、没有 SVG（引擎自带图如比对统计，或 R 后处理
+    在 svglite 未装时跑出的旧产物）。对这些「同目录无同名 .svg」的 PDF，
+    一并收集，保证「6.图片源码」永不为空——新 run 图会逐渐被可编辑 SVG 取代。
     """
     outdir = Path(outdir)
     dest_root = outdir / _VECTOR_DIR
@@ -279,9 +287,21 @@ def collect_vector_images(outdir: Path) -> list[Path]:
         return collected
     if dest_root.exists():
         shutil.rmtree(dest_root, ignore_errors=True)
-    for pdf in sorted(outdir.rglob("*.pdf")):
-        if _VECTOR_DIR in pdf.parts:  # 跳过 6.图片源码 自身，避免递归收集
+    # 1) SVG 源码优先（可编辑）
+    for svg in sorted(outdir.rglob("*.svg")):
+        if _VECTOR_DIR in svg.parts:  # 跳过 6.图片源码 自身，避免递归收集
             continue
+        rel = svg.relative_to(outdir)
+        dest = dest_root / rel
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(svg, dest)
+        collected.append(dest)
+    # 2) PDF 兜底：同目录下没有同名 .svg 的 PDF（旧 run 无 SVG 时保证目录不为空）
+    for pdf in sorted(outdir.rglob("*.pdf")):
+        if _VECTOR_DIR in pdf.parts:
+            continue
+        if pdf.with_suffix(".svg").exists():
+            continue  # 已有可编辑 SVG，跳过 PDF
         rel = pdf.relative_to(outdir)
         dest = dest_root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)

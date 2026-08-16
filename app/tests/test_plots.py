@@ -290,3 +290,41 @@ def test_finalize_figure_writes_pdf(monkeypatch, tmp_path: Path):
     assert png.exists()
     assert png.with_suffix(".pdf").exists()
     assert str(png.with_suffix(".pdf")) in saved
+
+
+def test_finalize_figure_writes_svg(monkeypatch, tmp_path: Path):
+    """_finalize_figure 同时导出同名 SVG 源码（fonttype='none' 文字可编辑）。"""
+    pytest.importorskip("matplotlib")
+    from lib import figure_qa as fqa
+
+    saved: list[str] = []
+
+    class FakeFig:
+        def savefig(self, p, **kw):
+            Path(p).parent.mkdir(parents=True, exist_ok=True)
+            Path(p).write_bytes(b"<svg>" if str(p).endswith(".svg") else b"png")
+            saved.append(str(p))
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(fqa, "audit_layout", lambda fig: [])
+    monkeypatch.setattr(fqa, "audit_png", lambda p: [])
+
+    png = tmp_path / "fig.png"
+    plots._finalize_figure(FakeFig(), png, None, "x")
+
+    assert png.with_suffix(".svg").exists()
+    assert str(png.with_suffix(".svg")) in saved
+
+
+def test_venn3_name_positions_outside_circles():
+    """回归（BUG-29）：三圆 Venn 的三个组别名都必须落在各自圆外。"""
+    centers = plots._VENN3_CENTERS
+    r = plots._VENN3_R
+    letters = ["A", "B", "C"]
+    for i, letter in enumerate(letters):
+        cx, cy = centers[i]
+        nx, ny = plots._VENN3_NAME_POS[letter]
+        dist = ((nx - cx) ** 2 + (ny - cy) ** 2) ** 0.5
+        assert dist > r, f"{letter} 标签到圆心 {dist:.2f} 未超出半径 {r}"

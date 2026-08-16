@@ -100,7 +100,7 @@ if Rscript -e "suppressMessages(library(DESeq2))" 2>/dev/null; then
   echo "     R/DESeq2 已存在，跳过"
 else
   if ! conda install -n pyseqrna -c conda-forge -c bioconda -y \
-      r-base rpy2 bioconductor-deseq2 r-pheatmap r-readxl; then
+      r-base rpy2 bioconductor-deseq2 r-pheatmap r-readxl r-svglite; then
     echo "     警告：R/DESeq2 安装失败，网页将回退 pydiffexpress 引擎（差异分析标准度降低），可稍后手动重装"
   fi
 fi
