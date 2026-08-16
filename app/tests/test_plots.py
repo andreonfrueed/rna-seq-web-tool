@@ -328,3 +328,43 @@ def test_venn3_name_positions_outside_circles():
         nx, ny = plots._VENN3_NAME_POS[letter]
         dist = ((nx - cx) ** 2 + (ny - cy) ** 2) ** 0.5
         assert dist > r, f"{letter} 标签到圆心 {dist:.2f} 未超出半径 {r}"
+
+
+def test_venn3_name_labels_bounding_box_clear_circles(tmp_path, monkeypatch):
+    """回归（BUG-29，真渲染）：组别名的文字边界框不得与任何圆相交。
+
+    上一版 bug 的病灶是「文字一半压圈」，但 audit_layout 只查文字与文字重叠、
+    不查文字与圆相交，所以 QA 报 CLEAN 也没拦住；锚点距离断言也只验文字中心。
+    这里用 matplotlib 实际渲染，取每个组别名 Text 的 window_extent 反变换到
+    数据坐标，对三个圆做「矩形 vs 圆」相交判定，永久锁死压圈回归。
+    """
+    pytest.importorskip("matplotlib")
+    import matplotlib.pyplot as plt
+
+    captured = _capture_figs(monkeypatch)
+    sets = {
+        "C vs LPS": {f"g{i}" for i in range(200)},
+        "C vs TTP": {f"g{i}" for i in range(100, 300)},
+        "LPS vs TTP": {f"g{i}" for i in range(250, 400)},
+    }
+    assert plots.render_venn(tmp_path, sets) is not None
+
+    fig = captured["Venn"]
+    ax = fig.axes[0]
+    renderer = fig.canvas.get_renderer()
+    inv = ax.transData.inverted()
+
+    name_texts = [t for t in ax.texts if t.get_text() in sets]
+    assert name_texts, "没找到组别名文本，测试失效"
+
+    for t in name_texts:
+        ext = t.get_window_extent(renderer=renderer)
+        (x0, y0), (x1, y1) = inv.transform([(ext.x0, ext.y0), (ext.x1, ext.y1)])
+        for cx, cy in plots._VENN3_CENTERS:
+            r = plots._VENN3_R
+            # 矩形上离圆心最近的点
+            nx = min(max(cx, x0), x1)
+            ny = min(max(cy, y0), y1)
+            dist2 = (nx - cx) ** 2 + (ny - cy) ** 2
+            assert dist2 > r * r, f"组别名 '{t.get_text()}' 的边界框仍与圆相交"
+    plt.close(fig)
