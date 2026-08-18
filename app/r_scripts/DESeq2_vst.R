@@ -364,7 +364,7 @@ render_pca <- function(vst_mat, col_data, outdir) {
   pca_png <- file.path(pca_dir, "All_Samples_PCA_vst.png")
   pca_pdf <- file.path(pca_dir, "All_Samples_PCA_vst.pdf")
   save_figure(pca_png, pca_pdf, 7.2, 6, 300, function() {
-    graphics::par(mar = c(4.2, 4.2, 1.2, 4.5))
+    graphics::par(mar = c(4.2, 4.2, 2.0, 1.2))
     graphics::plot(pca$x[, 1L], pca$x[, 2L], col = colors, pch = 16, cex = 1.5,
                    xlab = paste0("PC1 (", percent[[1L]], "%)"),
                    ylab = paste0("PC2 (", percent[[2L]], "%)"),
@@ -383,10 +383,10 @@ render_pca <- function(vst_mat, col_data, outdir) {
     # 样本标签（点上方小字号，展示样本名，避免与点/椭圆重叠）
     graphics::text(pca$x[, 1L], pca$x[, 2L], labels = rownames(pca$x),
                    cex = 0.62, pos = 3, offset = 0.45, col = "#333333")
-    graphics::legend("topright", legend = lv,
+    graphics::legend("top", inset = c(0, -0.08), xpd = NA, horiz = TRUE,
+                     legend = lv,
                      col = PAL_GROUP[seq_along(lv)],
-                     pch = 16, pt.cex = 1.4, bty = "n", inset = -0.14, xpd = NA,
-                     title = "Group", title.adj = 0)
+                     pch = 16, pt.cex = 1.4, bty = "n")
   })
 }
 
